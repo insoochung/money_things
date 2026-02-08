@@ -159,6 +159,17 @@ class WhatIfEngine:
             "total_tracked": len(rows),
         }
 
+    def update_what_if_prices(self) -> int:
+        """Update current prices and hypothetical P/L for all active what-if entries.
+
+        Convenience alias for update_all(). Fetches current market prices for every
+        tracked what-if entry and recomputes the hypothetical P/L.
+
+        Returns:
+            Number of entries updated.
+        """
+        return self.update_all()
+
     def list_whatifs(self, decision: str | None = None) -> list[dict[str, Any]]:
         """List what-if records, optionally filtered by decision type.
 

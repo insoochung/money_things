@@ -558,6 +558,87 @@
     }
   }
 
+  // ── 12b. Signals ──
+  async function loadSignals() {
+    try {
+      const signals = await api('/api/fund/signals');
+      const arr = Array.isArray(signals) ? signals : signals.signals || [];
+      if (!arr.length) { $('#signals-container').innerHTML = emptyHTML('No signals yet'); return; }
+
+      const pending = arr.filter(s => s.status === 'pending');
+      const history = arr.filter(s => s.status !== 'pending').slice(0, 20);
+
+      let html = '';
+
+      if (pending.length) {
+        html += pending.map(s => signalCardHTML(s, true)).join('');
+      }
+
+      if (history.length) {
+        html += `<div class="signals-divider">Recent History</div>`;
+        html += history.map(s => signalCardHTML(s, false)).join('');
+      }
+
+      if (!pending.length && !history.length) {
+        html = emptyHTML('No signals yet');
+      }
+
+      $('#signals-container').innerHTML = html;
+
+      // Wire up approve/reject buttons
+      $$('.approve-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => { e.stopPropagation(); handleSignalDecision(btn.dataset.id, 'approve'); });
+      });
+      $$('.reject-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => { e.stopPropagation(); handleSignalDecision(btn.dataset.id, 'reject'); });
+      });
+
+      // Wire up reasoning expand/collapse
+      $$('.signal-reasoning').forEach(el => {
+        el.addEventListener('click', () => { el.classList.toggle('truncated'); el.classList.toggle('expanded'); });
+      });
+    } catch (e) {
+      $('#signals-container').innerHTML = errorHTML('Failed to load signals', loadSignals);
+    }
+  }
+
+  function signalCardHTML(s, isPending) {
+    const actionCls = s.action.toLowerCase().includes('buy') ? 'buy' : 'sell';
+    const confPct = Math.round((s.confidence || 0) * 100);
+    const confColor = confPct >= 70 ? 'var(--green)' : confPct >= 40 ? 'var(--yellow)' : 'var(--red)';
+    return `<div class="signal-card ${isPending ? 'pending' : ''}">
+      <div class="signal-header">
+        <span class="action-badge ${actionCls}">${s.action}</span>
+        <span class="signal-symbol">${s.symbol}</span>
+        <div class="confidence-bar"><div class="confidence-bar-track"><div class="confidence-bar-fill" style="width:${confPct}%;background:${confColor}"></div></div>${confPct}%</div>
+        <span class="badge badge-muted">${s.source || 'unknown'}</span>
+        ${isPending ? `<span class="status-badge pending">Pending</span>` : `<span class="status-badge ${s.status}">${s.status}</span>`}
+      </div>
+      ${s.reasoning ? `<div class="signal-reasoning truncated">${s.reasoning}</div>` : ''}
+      <div class="signal-meta">
+        ${s.thesis_title ? `<span>📋 ${s.thesis_title}</span>` : ''}
+        ${s.current_price ? `<span>Price: ${fmtCur(s.current_price)}</span>` : ''}
+        ${s.size_pct ? `<span>Size: ${fmtPct(s.size_pct * 100)}</span>` : ''}
+        <span>${relTime(s.created_at)}</span>
+        ${s.decided_at ? `<span>Decided ${relTime(s.decided_at)}</span>` : ''}
+      </div>
+      ${isPending ? `<div class="signal-actions"><button class="approve-btn" data-id="${s.id}">✓ Approve</button><button class="reject-btn" data-id="${s.id}">✗ Reject</button></div>` : ''}
+    </div>`;
+  }
+
+  async function handleSignalDecision(signalId, action) {
+    const btns = $$(`[data-id="${signalId}"]`);
+    btns.forEach(b => b.disabled = true);
+    try {
+      const r = await fetch(`/api/fund/signals/${signalId}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      if (!r.ok) throw new Error(`${r.status}`);
+      loadSignals(); // refresh
+    } catch (e) {
+      btns.forEach(b => b.disabled = false);
+      alert(`Failed to ${action} signal: ${e.message}`);
+    }
+  }
+
   // ── 13. Congress ──
   async function loadCongress() {
     try {
@@ -604,6 +685,51 @@
       }).join('');
     } catch (e) {
       $('#principles-list').innerHTML = errorHTML('Failed to load principles', loadPrinciples);
+    }
+  }
+
+  // ── 14b. What-If ──
+  async function loadWhatIf() {
+    try {
+      const [items, summary] = await Promise.allSettled([
+        api('/api/fund/what-if'),
+        api('/api/fund/what-if/summary'),
+      ]);
+
+      const sumData = summary.status === 'fulfilled' ? summary.value : null;
+      const wiItems = items.status === 'fulfilled' ? (Array.isArray(items.value) ? items.value : items.value.items || []) : [];
+
+      // Summary cards
+      if (sumData) {
+        $('#whatif-summary').innerHTML = [
+          { label: 'Alpha Missed', val: fmtCur(sumData.total_missed_pnl), sub: 'Total hypothetical P/L', c: cls(sumData.total_missed_pnl) },
+          { label: 'Reject Accuracy', val: fmtPct(sumData.reject_accuracy_pct), sub: 'Good rejections', c: sumData.reject_accuracy_pct >= 50 ? 'positive' : 'negative' },
+          { label: 'Ignore Cost', val: fmtCur(sumData.ignore_cost_pnl), sub: 'Cost of inattention', c: cls(sumData.ignore_cost_pnl) },
+          { label: 'Best Pass', val: sumData.best_pass?.symbol || '—', sub: sumData.best_pass?.description || '', c: 'positive' },
+        ].map(i => `<div class="card"><div class="card-label">${i.label}</div><div class="card-value ${i.c}">${i.val}</div><div class="card-sub">${i.sub}</div></div>`).join('');
+      } else {
+        $('#whatif-summary').innerHTML = '';
+      }
+
+      // Table
+      if (!wiItems.length) { $('#whatif-container').innerHTML = emptyHTML('No passed signals to analyze'); return; }
+
+      $('#whatif-container').innerHTML = `<div class="table-wrapper"><table class="whatif-table"><thead><tr>
+        <th>Symbol</th><th>Action</th><th>Decision</th><th>Price at Pass</th><th>Current</th><th>Hyp. P/L</th><th>Days</th>
+      </tr></thead><tbody>${wiItems.map(w => {
+        const plCls = cls(w.hypothetical_pnl);
+        return `<tr>
+          <td><strong>${w.symbol}</strong></td>
+          <td><span class="action-badge ${w.action.toLowerCase().includes('buy') ? 'buy' : 'sell'}">${w.action}</span></td>
+          <td><span class="status-badge ${w.decision}">${w.decision}</span></td>
+          <td>${fmtCur(w.price_at_pass)}</td>
+          <td>${fmtCur(w.current_price)}</td>
+          <td class="${plCls}">${fmtCur(w.hypothetical_pnl)} (${fmtPct(w.hypothetical_pnl_pct)})</td>
+          <td>${w.days_since_pass}d</td>
+        </tr>`;
+      }).join('')}</tbody></table></div>`;
+    } catch (e) {
+      $('#whatif-container').innerHTML = errorHTML('Failed to load what-if analysis', loadWhatIf);
     }
   }
 
@@ -666,8 +792,10 @@
       loadPerformance(),
       loadDrawdown(),
       loadTrades(),
+      loadSignals(),
       loadCongress(),
       loadPrinciples(),
+      loadWhatIf(),
     ]);
 
     updateTimestamp();

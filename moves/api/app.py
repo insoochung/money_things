@@ -56,6 +56,104 @@ from engine.thesis import ThesisEngine
 logger = logging.getLogger(__name__)
 
 
+def _start_scheduler(db: Database, container: Any) -> Any:
+    """Initialize and start the task scheduler with all default jobs.
+
+    Creates a Scheduler instance, registers jobs with real engine callables,
+    and starts the background scheduler. Returns the scheduler for shutdown.
+
+    Args:
+        db: Database instance.
+        container: EngineContainer with engine references.
+
+    Returns:
+        The started Scheduler instance, or None if scheduler setup fails.
+    """
+    try:
+        from functools import partial
+
+        from apscheduler.triggers.cron import CronTrigger
+        from apscheduler.triggers.interval import IntervalTrigger
+
+        from engine.analytics import AnalyticsEngine
+        from engine.congress import CongressTradesEngine
+        from engine.jobs import (
+            job_congress_trades,
+            job_exposure_snapshot,
+            job_nav_snapshot,
+            job_price_update,
+            job_signal_expiry,
+            job_stale_thesis_check,
+            job_whatif_update,
+        )
+        from engine.scheduler import Scheduler
+        from engine.whatif import WhatIfEngine
+
+        analytics = AnalyticsEngine(db=db)
+        whatif = WhatIfEngine(db=db)
+        congress = CongressTradesEngine(db=db, signal_engine=container.signal_engine)
+
+        tz = "America/New_York"
+        scheduler = Scheduler(db=db)
+
+        # Price update: every 15 min, market hours
+        scheduler.add_job(
+            "price_update",
+            partial(job_price_update, db),
+            CronTrigger(minute="*/15", hour="9-15", day_of_week="mon-fri", timezone=tz),
+        )
+
+        # Signal expiry: every hour
+        scheduler.add_job(
+            "signal_expiry",
+            partial(job_signal_expiry, container.signal_engine, db),
+            IntervalTrigger(hours=1),
+        )
+
+        # NAV snapshot: 4:15 PM ET
+        scheduler.add_job(
+            "nav_snapshot",
+            partial(job_nav_snapshot, analytics),
+            CronTrigger(hour=16, minute=15, day_of_week="mon-fri", timezone=tz),
+        )
+
+        # What-if update: 4:30 PM ET
+        scheduler.add_job(
+            "whatif_update",
+            partial(job_whatif_update, whatif),
+            CronTrigger(hour=16, minute=30, day_of_week="mon-fri", timezone=tz),
+        )
+
+        # Congress trades: 7:00 PM ET daily
+        scheduler.add_job(
+            "congress_trades",
+            partial(job_congress_trades, congress),
+            CronTrigger(hour=19, minute=0, timezone=tz),
+        )
+
+        # Exposure snapshot: hourly, market hours
+        scheduler.add_job(
+            "exposure_snapshot",
+            partial(job_exposure_snapshot, analytics),
+            CronTrigger(minute=0, hour="9-16", day_of_week="mon-fri", timezone=tz),
+        )
+
+        # Stale thesis check: Monday 8:00 AM ET
+        scheduler.add_job(
+            "stale_thesis_check",
+            partial(job_stale_thesis_check, container.thesis_engine, db),
+            CronTrigger(day_of_week="mon", hour=8, minute=0, timezone=tz),
+        )
+
+        scheduler.start()
+        logger.info("Scheduler started with %d jobs", len(scheduler._jobs))
+        return scheduler
+
+    except Exception:
+        logger.exception("Failed to start scheduler — continuing without it")
+        return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> Any:
     """Application lifespan manager for startup and shutdown tasks.
@@ -114,12 +212,26 @@ async def lifespan(app: FastAPI) -> Any:
         set_engines(container)
 
         logger.info("All engines initialized successfully")
+
+        # Start scheduler (skip in testing mode)
+        scheduler = None
+        if not settings.testing:
+            scheduler = _start_scheduler(db, container)
+
         yield
 
     except Exception as e:
         logger.error("Failed to initialize application: %s", e)
         raise
     finally:
+        # Shutdown scheduler
+        if scheduler is not None:
+            try:
+                scheduler.stop()
+                logger.info("Scheduler stopped")
+            except Exception:
+                logger.exception("Error stopping scheduler")
+
         # Shutdown
         try:
             from api.deps import get_engines as _get
