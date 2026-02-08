@@ -160,9 +160,9 @@ async def toggle_kill_switch(
             )
 
         # Update kill switch status
-        from datetime import datetime
+        from datetime import UTC, datetime
 
-        timestamp = datetime.utcnow().isoformat() + "Z"
+        timestamp = datetime.now(UTC).isoformat() + "Z"
 
         if request.active:
             # Activate kill switch
@@ -329,9 +329,9 @@ async def switch_mode(
         # Note: Actual mode switching would require application restart
         # or dynamic configuration reloading. For now, just log the intent.
 
-        from datetime import datetime
+        from datetime import UTC, datetime
 
-        timestamp = datetime.utcnow().isoformat() + "Z"
+        timestamp = datetime.now(UTC).isoformat() + "Z"
 
         # Log the mode switch request
         engines.db.execute(

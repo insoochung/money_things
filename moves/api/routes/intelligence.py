@@ -564,11 +564,11 @@ async def get_what_if_analysis(
             hypothetical_pnl = position_size * (hypothetical_pnl_pct / 100)
 
             # Calculate days since pass
-            from datetime import datetime
+            from datetime import UTC, datetime
 
             try:
                 signal_date = datetime.fromisoformat(item["signal_created"].replace("Z", "+00:00"))
-                days_since_pass = (datetime.utcnow() - signal_date).days
+                days_since_pass = (datetime.now(UTC) - signal_date).days
             except Exception:
                 days_since_pass = 0
 

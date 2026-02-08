@@ -164,11 +164,11 @@ async def list_signals(
             # Calculate days pending (for pending signals)
             days_pending = None
             if signal["status"] == "pending" and signal["created_at"]:
-                from datetime import datetime
+                from datetime import UTC, datetime
 
                 try:
                     created_at = datetime.fromisoformat(signal["created_at"].replace("Z", "+00:00"))
-                    now = datetime.utcnow()
+                    now = datetime.now(UTC)
                     days_pending = (now - created_at).days
                 except Exception as e:
                     logger.warning(

@@ -22,7 +22,7 @@ Dependencies:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -222,7 +222,7 @@ async def get_fund_status(engines: Any = Depends(get_engines)) -> FundStatus:
             cash=cash,
             cash_pct=(cash / nav * 100) if nav > 0 else 0.0,
             positions_count=positions_count,
-            last_updated=datetime.utcnow().isoformat() + "Z",
+            last_updated=datetime.now(UTC).isoformat() + "Z",
         )
 
     except Exception as e:

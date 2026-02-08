@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
@@ -175,7 +175,7 @@ async def send_initial_prices(websocket: WebSocket, engines: Any) -> None:
                         "symbol": symbol,
                         "price": price_data["price"],
                         "change_pct": price_data.get("change_pct", 0.0),
-                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                        "timestamp": datetime.now(UTC).isoformat() + "Z",
                     }
                     await websocket.send_text(json.dumps(message))
 
@@ -209,7 +209,7 @@ async def broadcast_price_update(symbol: str, price: float, change_pct: float = 
         "symbol": symbol,
         "price": price,
         "change_pct": change_pct,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(UTC).isoformat() + "Z",
     }
     message_text = json.dumps(message)
 
