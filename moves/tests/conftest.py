@@ -42,7 +42,13 @@ MOVES_ROOT = Path(__file__).resolve().parent.parent
 if str(MOVES_ROOT) not in sys.path:
     sys.path.insert(0, str(MOVES_ROOT))
 
+import os  # noqa: E402
+
 from db.database import Database  # noqa: E402
+
+# Enable testing mode to bypass auth middleware
+os.environ["MOVES_TESTING"] = "true"
+os.environ["MOVES_SESSION_SECRET_KEY"] = "test-secret-key-for-testing"
 
 
 @pytest.fixture

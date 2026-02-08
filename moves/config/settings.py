@@ -135,6 +135,16 @@ class Settings(BaseSettings):
     domain_boost: float = 1.15
     out_of_domain_penalty: float = 0.90
 
+    # Google OAuth Authentication
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = ""
+    allowed_emails: list[str] = Field(default_factory=list)
+    session_secret_key: str = ""
+
+    # Testing
+    testing: bool = False
+
     def get_db_path(self) -> Path:
         """Determine the database file path based on configuration.
 
