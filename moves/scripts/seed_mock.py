@@ -34,6 +34,7 @@ def seed_mock() -> None:
     db = Database(db_path)
     db.init_schema()
 
+    _seed_users(db)
     _seed_accounts(db)
     _seed_theses(db)
     _seed_positions(db)
@@ -48,6 +49,20 @@ def seed_mock() -> None:
 
     db.close()
     print("✅ Mock database seeded successfully")
+
+
+def _seed_users(db: Database) -> None:
+    """Seed default users."""
+    db.execute(
+        """INSERT OR IGNORE INTO users (email, name, role)
+           VALUES ('insoo@default.local', 'Insoo', 'admin')"""
+    )
+    db.execute(
+        """INSERT OR IGNORE INTO users (email, name, role)
+           VALUES ('test@example.com', 'Test User', 'user')"""
+    )
+    db.connect().commit()
+    print("  ✓ users")
 
 
 def _seed_accounts(db: Database) -> None:

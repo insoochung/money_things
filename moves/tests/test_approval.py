@@ -47,7 +47,7 @@ class TestAutoApproveRules:
             size_pct=0.3,  # 0.3% of $100k = $300 < $500
             confidence=0.5,
         )
-        assert workflow.should_auto_approve(signal) is True
+        assert workflow.should_auto_approve(signal, user_id=1) is True
 
     def test_high_value_not_auto_approved(self, workflow, mock_db):
         """Trades above $500 are not auto-approved (unless other rules match)."""
@@ -62,7 +62,7 @@ class TestAutoApproveRules:
             size_pct=5.0,  # 5% of $100k = $5000 > $500
             confidence=0.5,
         )
-        assert workflow.should_auto_approve(signal) is False
+        assert workflow.should_auto_approve(signal, user_id=1) is False
 
     def test_high_confidence_confirmed_thesis(self, workflow, mock_db):
         """High confidence + confirmed thesis triggers auto-approve."""
@@ -77,7 +77,7 @@ class TestAutoApproveRules:
             thesis_id=1,
             confidence=0.95,
         )
-        assert workflow.should_auto_approve(signal) is True
+        assert workflow.should_auto_approve(signal, user_id=1) is True
 
     def test_high_confidence_unconfirmed_thesis(self, workflow, mock_db):
         """High confidence but unconfirmed thesis doesn't auto-approve."""
@@ -92,7 +92,7 @@ class TestAutoApproveRules:
             thesis_id=1,
             confidence=0.95,
         )
-        assert workflow.should_auto_approve(signal) is False
+        assert workflow.should_auto_approve(signal, user_id=1) is False
 
     def test_rebalance_auto_approve(self, workflow):
         """Rebalance signals are auto-approved."""
@@ -104,7 +104,7 @@ class TestAutoApproveRules:
         )
         # Manually set source to "rebalance" (not in SignalSource enum yet)
         object.__setattr__(signal, "source", "rebalance")
-        assert workflow.should_auto_approve(signal) is True
+        assert workflow.should_auto_approve(signal, user_id=1) is True
 
     def test_no_rules_match(self, workflow):
         """Signal with no matching rules is not auto-approved."""
@@ -114,7 +114,7 @@ class TestAutoApproveRules:
             symbol="AAPL",
             confidence=0.5,
         )
-        assert workflow.should_auto_approve(signal) is False
+        assert workflow.should_auto_approve(signal, user_id=1) is False
 
 
 class TestProcessSignal:
@@ -133,7 +133,7 @@ class TestProcessSignal:
             size_pct=0.1,
             confidence=0.5,
         )
-        result = workflow.process_signal(signal)
+        result = workflow.process_signal(signal, user_id=1)
 
         assert result["status"] == "auto_approved"
         mock_db.execute.assert_called()
@@ -146,7 +146,7 @@ class TestProcessSignal:
             symbol="AAPL",
             confidence=0.5,
         )
-        result = workflow.process_signal(signal)
+        result = workflow.process_signal(signal, user_id=1)
 
         assert result["status"] == "pending"
 
@@ -162,7 +162,7 @@ class TestModifySignal:
             "symbol": "AAPL",
         }
 
-        result = workflow.modify_signal(1, size_override=2.0)
+        result = workflow.modify_signal(1, user_id=1, size_override=2.0)
 
         assert result["success"] is True
         mock_db.execute.assert_called()
@@ -171,7 +171,7 @@ class TestModifySignal:
         """Modifying nonexistent signal fails."""
         mock_db.fetch_one.return_value = None
 
-        result = workflow.modify_signal(999)
+        result = workflow.modify_signal(999, user_id=1)
         assert result["success"] is False
 
     def test_modify_non_pending(self, workflow, mock_db):
@@ -182,7 +182,7 @@ class TestModifySignal:
             "symbol": "AAPL",
         }
 
-        result = workflow.modify_signal(1, size_override=2.0)
+        result = workflow.modify_signal(1, user_id=1, size_override=2.0)
         assert result["success"] is False
 
     def test_modify_no_changes(self, workflow, mock_db):
@@ -193,5 +193,5 @@ class TestModifySignal:
             "symbol": "AAPL",
         }
 
-        result = workflow.modify_signal(1)
+        result = workflow.modify_signal(1, user_id=1)
         assert result["success"] is False

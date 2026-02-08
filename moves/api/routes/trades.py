@@ -23,6 +23,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from api.auth import get_current_user
 from api.deps import get_engines
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,7 @@ async def list_trades(
     limit: int = Query(50, ge=1, le=500, description="Maximum number of trades to return"),
     offset: int = Query(0, ge=0, description="Number of trades to skip"),
     engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> list[Trade]:
     """List executed trades with optional filtering.
 
@@ -223,6 +225,7 @@ async def get_trades_summary(
     thesis_id: int | None = Query(None, description="Filter by thesis ID"),
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
     engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> TradesSummary:
     """Get summary statistics for trade performance.
 

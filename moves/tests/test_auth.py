@@ -170,7 +170,9 @@ class TestSessionManagement:
             s = URLSafeTimedSerializer(settings.session_secret_key)
             token = s.dumps({"user": "owner"})
             mock_req = type("R", (), {"cookies": {"session": token}})()
-            assert get_current_user(mock_req) == "owner"
+            result = get_current_user(mock_req)
+            assert result["email"] == "owner"
+            assert result["role"] == "admin"
 
     def test_get_current_user_no_cookie(self) -> None:
         """Missing cookie raises 401."""

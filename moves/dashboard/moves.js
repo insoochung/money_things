@@ -775,16 +775,69 @@
   }
 
   // ── Init ──
+  // ── User Info ──
+  async function loadUserInfo() {
+    try {
+      const u = await api('/api/fund/users/me');
+      const el = $('#user-info');
+      if (el && u.name) {
+        el.textContent = u.name;
+        el.title = u.email || '';
+      }
+    } catch (e) { /* ignore — not critical */ }
+  }
+
+  // ── Shared Theses ──
+  async function loadSharedTheses() {
+    const el = $('#shared-thesis-list');
+    if (!el) return;
+    try {
+      const data = await api('/api/fund/shared-theses');
+      if (!data.length) { el.innerHTML = emptyHTML('No shared theses available'); return; }
+      el.innerHTML = data.map(t => `
+        <div class="card thesis-card">
+          <div class="thesis-header">
+            <span class="thesis-title">${t.title}</span>
+            <span class="badge">${t.strategy}</span>
+          </div>
+          <div class="thesis-meta">
+            Shared by ${t.shared_by} · ${t.horizon} · ${fmtPct(t.conviction * 100)} conviction
+          </div>
+          <div class="thesis-symbols">${(t.symbols || []).join(', ')}</div>
+          <button class="btn-sm" onclick="cloneThesis(${t.thesis_id})">Clone</button>
+        </div>
+      `).join('');
+    } catch (e) {
+      el.innerHTML = emptyHTML('Shared theses unavailable');
+    }
+  }
+
+  // Global clone handler
+  window.cloneThesis = async function(thesisId) {
+    try {
+      const r = await fetch(`/api/fund/shared-theses/${thesisId}/clone`, { method: 'POST' });
+      if (r.ok) {
+        const d = await r.json();
+        alert(`Thesis cloned! New thesis ID: ${d.new_thesis_id}`);
+        loadTheses();
+      } else {
+        alert('Failed to clone thesis');
+      }
+    } catch (e) { alert('Error cloning thesis'); }
+  };
+
   async function init() {
     initTheme();
     updateTimestamp();
 
     // Load all sections in parallel
     await Promise.allSettled([
+      loadUserInfo(),
       loadSummary(),
       loadMacro(),
       loadRisk(),
       loadTheses(),
+      loadSharedTheses(),
       loadExposure(),
       loadCorrelation(),
       loadTreemap(),

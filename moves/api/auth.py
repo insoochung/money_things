@@ -217,19 +217,30 @@ def _register_google_routes(
             return RedirectResponse("/auth/login", status_code=303)
 
 
-def get_current_user(request: Request) -> str:
+def get_current_user(request: Request) -> dict:
     """Extract current user from session cookie.
+
+    In testing mode (MOVES_TESTING=true), returns a default admin user so that
+    tests can exercise all routes without setting up auth infrastructure.
+
+    In production, reads user identity from the signed session cookie and looks
+    up the user record in the database.
 
     Args:
         request: Request with session cookie.
 
     Returns:
-        User identifier (email for Google mode, 'owner' for password mode).
+        Dictionary with user info: id, email, name, role.
 
     Raises:
         HTTPException: If no valid session cookie is found.
     """
     settings = get_settings()
+
+    # Testing mode bypass — return default admin user
+    if settings.testing:
+        return {"id": 1, "email": "insoo@default.local", "name": "Insoo", "role": "admin"}
+
     serializer = URLSafeTimedSerializer(settings.session_secret_key or "dev-secret-change-me")
 
     session_cookie = request.cookies.get("session")
@@ -238,9 +249,33 @@ def get_current_user(request: Request) -> str:
 
     try:
         data = serializer.loads(session_cookie, max_age=SESSION_MAX_AGE)
-        return data.get("email") or data.get("user", "unknown")
     except (BadSignature, SignatureExpired, KeyError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
+
+    # If session has user_id (multi-user mode), look up in DB
+    user_id = data.get("user_id")
+    if user_id:
+        from api.deps import get_engines
+
+        try:
+            engines = get_engines()
+            user_row = engines.db.fetchone(
+                "SELECT id, email, name, role FROM users WHERE id = ? AND active = 1",
+                (user_id,),
+            )
+            if not user_row:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive"
+                )
+            return dict(user_row)
+        except RuntimeError:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Engines not initialized"
+            )
+
+    # Legacy single-user session — return default user
+    email = data.get("email") or data.get("user", "unknown")
+    return {"id": 1, "email": email, "name": "Owner", "role": "admin"}
 
 
 class AuthMiddleware(BaseHTTPMiddleware):

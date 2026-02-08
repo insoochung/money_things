@@ -25,6 +25,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from api.auth import get_current_user
 from api.deps import get_engines
 
 logger = logging.getLogger(__name__)
@@ -116,7 +117,10 @@ class SignalDecisionResponse(BaseModel):
 
 @router.get("/signals", response_model=list[SignalResponse])
 async def list_signals(
-    status: str | None = None, limit: int = 50, engines: Any = Depends(get_engines)
+    status: str | None = None,
+    limit: int = 50,
+    engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> list[SignalResponse]:
     """List trading signals with optional status filtering.
 
@@ -216,7 +220,10 @@ async def list_signals(
 
 @router.post("/signals/{signal_id}/approve", response_model=SignalDecisionResponse)
 async def approve_signal(
-    signal_id: int, decision: SignalDecisionRequest, engines: Any = Depends(get_engines)
+    signal_id: int,
+    decision: SignalDecisionRequest,
+    engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> SignalDecisionResponse:
     """Approve a pending signal for execution.
 
@@ -307,7 +314,10 @@ async def approve_signal(
 
 @router.post("/signals/{signal_id}/reject", response_model=SignalDecisionResponse)
 async def reject_signal(
-    signal_id: int, decision: SignalDecisionRequest, engines: Any = Depends(get_engines)
+    signal_id: int,
+    decision: SignalDecisionRequest,
+    engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> SignalDecisionResponse:
     """Reject a pending signal and record for what-if tracking.
 

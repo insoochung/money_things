@@ -742,6 +742,13 @@ tr.overlap { background: rgba(47,128,237,.06); }
   td.hide-tablet, th.hide-tablet { display: none; }
 }
 
+/* User info */
+.user-info { font-size: .85rem; color: var(--text-secondary, #9b9a97); font-weight: 500; margin-right: .75rem; }
+.btn-sm { padding: .3rem .75rem; font-size: .8rem; background: var(--text, #37352f); color: #fff; border: none; border-radius: 3px; cursor: pointer; margin-top: .5rem; }
+.btn-sm:hover { opacity: .85; }
+.thesis-meta { font-size: .8rem; color: var(--text-secondary, #9b9a97); margin: .25rem 0; }
+.thesis-symbols { font-family: 'IBM Plex Mono', monospace; font-size: .8rem; color: var(--text, #37352f); }
+
 @media (max-width: 480px) {
   .summary-grid { grid-template-columns: repeat(2, 1fr); }
   .risk-grid { grid-template-columns: repeat(2, 1fr); }

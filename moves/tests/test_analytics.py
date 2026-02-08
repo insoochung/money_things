@@ -44,7 +44,7 @@ class TestSharpeRatio:
     def test_insufficient_data(self, seeded_db: Database) -> None:
         """Sharpe with < 2 data points returns 0."""
         engine = AnalyticsEngine(seeded_db)
-        assert engine.sharpe_ratio() == 0.0
+        assert engine.sharpe_ratio(user_id=1) == 0.0
 
     def test_positive_returns(self, db: Database) -> None:
         """Sharpe with consistent positive returns should be positive."""
@@ -57,7 +57,7 @@ class TestSharpeRatio:
         _insert_nav_series(db, values)
 
         engine = AnalyticsEngine(db)
-        sharpe = engine.sharpe_ratio(days=365)
+        sharpe = engine.sharpe_ratio(user_id=1, days=365)
         assert sharpe > 0
 
     def test_flat_returns(self, db: Database) -> None:
@@ -66,7 +66,7 @@ class TestSharpeRatio:
         _insert_nav_series(db, values)
 
         engine = AnalyticsEngine(db)
-        assert engine.sharpe_ratio(days=365) == 0.0
+        assert engine.sharpe_ratio(user_id=1, days=365) == 0.0
 
 
 class TestMaxDrawdown:
@@ -78,7 +78,7 @@ class TestMaxDrawdown:
         _insert_nav_series(db, values)
 
         engine = AnalyticsEngine(db)
-        dd = engine.max_drawdown()
+        dd = engine.max_drawdown(user_id=1)
         assert dd["max_dd"] == 0.0
 
     def test_drawdown_detected(self, seeded_db: Database) -> None:
@@ -92,7 +92,7 @@ class TestMaxDrawdown:
         _insert_nav_series(seeded_db, values)
 
         engine = AnalyticsEngine(seeded_db)
-        dd = engine.max_drawdown()
+        dd = engine.max_drawdown(user_id=1)
         assert dd["max_dd"] > 0.09  # ~10%
         assert dd["peak_date"] == "2025-01-02"
         assert dd["trough_date"] == "2025-01-03"
@@ -100,7 +100,7 @@ class TestMaxDrawdown:
     def test_empty_nav(self, db: Database) -> None:
         """Empty portfolio_value returns zero drawdown."""
         engine = AnalyticsEngine(db)
-        dd = engine.max_drawdown()
+        dd = engine.max_drawdown(user_id=1)
         assert dd["max_dd"] == 0.0
 
 
@@ -110,7 +110,7 @@ class TestWinRate:
     def test_no_trades(self, seeded_db: Database) -> None:
         """No trades returns 0 win rate."""
         engine = AnalyticsEngine(seeded_db)
-        result = engine.win_rate()
+        result = engine.win_rate(user_id=1)
         assert result["win_rate"] == 0.0
 
     def test_all_winners(self, seeded_db: Database) -> None:
@@ -123,7 +123,7 @@ class TestWinRate:
             ],
         )
         engine = AnalyticsEngine(seeded_db)
-        result = engine.win_rate()
+        result = engine.win_rate(user_id=1)
         assert result["win_rate"] == 1.0
         assert result["wins"] == 2
 
@@ -137,7 +137,7 @@ class TestWinRate:
             ],
         )
         engine = AnalyticsEngine(seeded_db)
-        result = engine.win_rate()
+        result = engine.win_rate(user_id=1)
         assert result["win_rate"] == 0.5
 
     def test_group_by_source(self, seeded_db: Database) -> None:
@@ -150,7 +150,7 @@ class TestWinRate:
             ],
         )
         engine = AnalyticsEngine(seeded_db)
-        result = engine.win_rate(group_by="source")
+        result = engine.win_rate(user_id=1, group_by="source")
         assert "manual" in result
         assert "thesis_update" in result
 
@@ -161,7 +161,7 @@ class TestStressTest:
     def test_stress_with_nav(self, seeded_db: Database) -> None:
         """Stress test with existing NAV should return estimated loss."""
         engine = AnalyticsEngine(seeded_db)
-        result = engine.stress_test(market_drop=-0.20)
+        result = engine.stress_test(user_id=1, market_drop=-0.20)
         assert result["current_nav"] == 100000
         assert result["estimated_nav"] <= 100000
         assert "Market" in result["scenario"]
@@ -169,7 +169,7 @@ class TestStressTest:
     def test_stress_empty(self, db: Database) -> None:
         """Stress test with no NAV returns zero impact."""
         engine = AnalyticsEngine(db)
-        result = engine.stress_test()
+        result = engine.stress_test(user_id=1)
         assert result["current_nav"] == 0.0
 
 
@@ -179,7 +179,7 @@ class TestVaR:
     def test_var_insufficient_data(self, seeded_db: Database) -> None:
         """VaR with insufficient data returns 0."""
         engine = AnalyticsEngine(seeded_db)
-        assert engine.var_95() == 0.0
+        assert engine.var_95(user_id=1) == 0.0
 
 
 class TestNavSnapshot:
@@ -189,14 +189,14 @@ class TestNavSnapshot:
         """snapshot_nav should insert a portfolio_value row."""
         engine = AnalyticsEngine(seeded_db)
         initial_count = len(seeded_db.fetchall("SELECT * FROM portfolio_value"))
-        engine.snapshot_nav()
+        engine.snapshot_nav(user_id=1)
         new_count = len(seeded_db.fetchall("SELECT * FROM portfolio_value"))
         assert new_count == initial_count + 1
 
     def test_snapshot_exposure(self, seeded_db: Database) -> None:
         """snapshot_exposure should insert an exposure_snapshots row."""
         engine = AnalyticsEngine(seeded_db)
-        engine.snapshot_exposure()
+        engine.snapshot_exposure(user_id=1)
         rows = seeded_db.fetchall("SELECT * FROM exposure_snapshots")
         assert len(rows) == 1
 
@@ -207,7 +207,7 @@ class TestCalibration:
     def test_empty_calibration(self, seeded_db: Database) -> None:
         """No trades returns empty calibration."""
         engine = AnalyticsEngine(seeded_db)
-        assert engine.calibration() == []
+        assert engine.calibration(user_id=1) == []
 
 
 class TestNavHistory:
@@ -216,7 +216,7 @@ class TestNavHistory:
     def test_returns_existing_records(self, seeded_db: Database) -> None:
         """nav_history should return seeded portfolio_value records."""
         engine = AnalyticsEngine(seeded_db)
-        history = engine.nav_history()
+        history = engine.nav_history(user_id=1)
         assert len(history) >= 1
         assert "date" in history[0]
         assert "nav" in history[0]

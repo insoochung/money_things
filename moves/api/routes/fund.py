@@ -28,6 +28,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from api.auth import get_current_user
 from api.deps import get_engines
 
 logger = logging.getLogger(__name__)
@@ -129,7 +130,9 @@ class ExposureBreakdown(BaseModel):
 
 
 @router.get("/status", response_model=FundStatus)
-async def get_fund_status(engines: Any = Depends(get_engines)) -> FundStatus:
+async def get_fund_status(
+    engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+) -> FundStatus:
     """Get overall fund status and performance metrics.
 
     Returns high-level portfolio metrics including NAV, returns, P/L,
@@ -234,7 +237,9 @@ async def get_fund_status(engines: Any = Depends(get_engines)) -> FundStatus:
 
 
 @router.get("/positions", response_model=list[Position])
-async def get_positions(engines: Any = Depends(get_engines)) -> list[Position]:
+async def get_positions(
+    engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+) -> list[Position]:
     """Get all open positions with current market values.
 
     Returns a list of all positions with real-time pricing and P/L calculations.
@@ -319,7 +324,9 @@ async def get_positions(engines: Any = Depends(get_engines)) -> list[Position]:
 
 
 @router.get("/position/{ticker}", response_model=PositionDetail)
-async def get_position_detail(ticker: str, engines: Any = Depends(get_engines)) -> PositionDetail:
+async def get_position_detail(
+    ticker: str, engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+) -> PositionDetail:
     """Get detailed information for a specific position including lots.
 
     Args:
@@ -431,7 +438,9 @@ async def get_position_detail(ticker: str, engines: Any = Depends(get_engines)) 
 
 
 @router.get("/exposure", response_model=ExposureBreakdown)
-async def get_exposure(engines: Any = Depends(get_engines)) -> ExposureBreakdown:
+async def get_exposure(
+    engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+) -> ExposureBreakdown:
     """Get portfolio exposure breakdown by sector and thesis.
 
     Args:

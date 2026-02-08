@@ -1,14 +1,6 @@
 """Congress trades scraper: fetch, store, and analyze congressional trading activity.
 
-Scrapes publicly available congressional trading disclosures and cross-references
-them against portfolio positions and thesis symbols to generate low-confidence
-trading signals.
-
-Data source: Capitol Trades (https://www.capitoltrades.com/trades) with graceful
-fallback to empty results if the site is unavailable or blocks requests.
-
-Classes:
-    CongressTradesEngine: Main class for scraping, storing, and analyzing trades.
+Scraping stays global (no user_id). Overlap detection uses user's positions.
 """
 
 from __future__ import annotations
@@ -28,51 +20,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Capitol Trades URL for recent trades
 CAPITOL_TRADES_URL = "https://www.capitoltrades.com/trades"
-
-# Default request timeout in seconds
 REQUEST_TIMEOUT = 15
 
 
 class CongressTradesEngine:
-    """Scrapes and analyzes congressional trading activity.
-
-    Fetches recent trades from Capitol Trades, stores them in the database,
-    cross-references against portfolio positions and thesis symbols, and
-    generates low-confidence signals for overlapping trades.
-
-    Attributes:
-        db: Database instance for persistence.
-        signal_engine: Optional SignalEngine for creating signals.
-    """
+    """Scrapes and analyzes congressional trading activity."""
 
     def __init__(self, db: Database, signal_engine: SignalEngine | None = None) -> None:
-        """Initialize the CongressTradesEngine.
-
-        Args:
-            db: Database instance for reading/writing congress trades.
-            signal_engine: Optional SignalEngine for generating signals from
-                overlapping trades. If None, generate_signals() returns empty list.
-        """
         self.db = db
         self.signal_engine = signal_engine
 
     def fetch_recent(self, days: int = 7) -> list[dict]:
-        """Fetch recent congressional trades from Capitol Trades.
-
-        Makes an HTTP request to Capitol Trades and parses the HTML table of
-        recent trades. Falls back to empty results on any error.
-
-        Args:
-            days: Number of days of trades to fetch. Used for filtering results
-                by transaction date. Defaults to 7.
-
-        Returns:
-            List of trade dicts with keys: member_name, symbol, action,
-            amount_range, disclosure_date, transaction_date, source_url.
-            Returns empty list on any error.
-        """
+        """Fetch recent congressional trades from Capitol Trades."""
         try:
             return self._scrape_capitol_trades(days)
         except Exception:
@@ -80,14 +40,7 @@ class CongressTradesEngine:
             return []
 
     def _scrape_capitol_trades(self, days: int) -> list[dict]:
-        """Scrape trades from Capitol Trades HTML.
-
-        Args:
-            days: Number of days to look back for trades.
-
-        Returns:
-            List of parsed trade dicts.
-        """
+        """Scrape trades from Capitol Trades HTML."""
         headers = {
             "User-Agent": "Mozilla/5.0 (compatible; MoneyMoves/1.0)",
             "Accept": "text/html",
@@ -100,7 +53,6 @@ class CongressTradesEngine:
         cutoff = datetime.now(UTC) - timedelta(days=days)
         trades: list[dict] = []
 
-        # Capitol Trades uses a table with rows for each trade
         rows = soup.select("table tbody tr")
         for row in rows:
             trade = self._parse_trade_row(row, cutoff)
@@ -111,15 +63,7 @@ class CongressTradesEngine:
         return trades
 
     def _parse_trade_row(self, row: BeautifulSoup, cutoff: datetime) -> dict | None:
-        """Parse a single trade row from the Capitol Trades HTML table.
-
-        Args:
-            row: BeautifulSoup element representing a table row.
-            cutoff: Only return trades on or after this datetime.
-
-        Returns:
-            Trade dict if parseable and within date range, None otherwise.
-        """
+        """Parse a single trade row from the Capitol Trades HTML table."""
         cells = row.select("td")
         if len(cells) < 5:
             return None
@@ -131,13 +75,11 @@ class CongressTradesEngine:
             amount_range = cells[3].get_text(strip=True)
             date_text = cells[4].get_text(strip=True)
 
-            # Normalize action
             if "purchase" in action or "buy" in action:
                 action = "buy"
             elif "sale" in action or "sell" in action:
                 action = "sell"
 
-            # Skip if no symbol
             if not symbol or not symbol.isalpha():
                 return None
 
@@ -154,16 +96,7 @@ class CongressTradesEngine:
             return None
 
     def store_trades(self, trades: list[dict]) -> int:
-        """Insert new trades into the database, skipping duplicates.
-
-        Duplicates are detected by matching member_name + symbol + transaction_date.
-
-        Args:
-            trades: List of trade dicts from fetch_recent().
-
-        Returns:
-            Number of new trades inserted.
-        """
+        """Insert new trades into the database, skipping duplicates. Global (no user_id)."""
         inserted = 0
         for trade in trades:
             politician = trade.get("politician") or trade.get("member_name", "")
@@ -201,22 +134,24 @@ class CongressTradesEngine:
         logger.info("Stored %d new congress trades (of %d fetched)", inserted, len(trades))
         return inserted
 
-    def check_overlap(self) -> list[dict]:
-        """Cross-reference congress trades with portfolio positions and thesis symbols.
+    def check_overlap(self, user_id: int) -> list[dict]:
+        """Cross-reference congress trades with a user's positions and thesis symbols.
 
-        Finds congress trades where the traded symbol matches either a current
-        position or a symbol in an active thesis.
+        Args:
+            user_id: ID of the owning user.
 
         Returns:
-            List of congress trade dicts that overlap with portfolio/thesis symbols.
+            List of congress trade dicts that overlap with the user's portfolio/thesis symbols.
         """
-        # Get portfolio symbols
-        position_rows = self.db.fetchall("SELECT DISTINCT symbol FROM positions")
+        position_rows = self.db.fetchall(
+            "SELECT DISTINCT symbol FROM positions WHERE user_id = ?",
+            (user_id,),
+        )
         position_symbols = {r["symbol"] for r in position_rows}
 
-        # Get thesis symbols
         thesis_rows = self.db.fetchall(
-            "SELECT symbols FROM theses WHERE status IN ('active', 'strengthening', 'confirmed')"
+            "SELECT symbols FROM theses WHERE status IN ('active', 'strengthening', 'confirmed') AND user_id = ?",
+            (user_id,),
         )
         thesis_symbols: set[str] = set()
         for r in thesis_rows:
@@ -233,7 +168,6 @@ class CongressTradesEngine:
         if not all_symbols:
             return []
 
-        # Find overlapping trades
         placeholders = ",".join("?" for _ in all_symbols)
         overlapping = self.db.fetchall(
             f"SELECT * FROM congress_trades WHERE symbol IN ({placeholders})",
@@ -242,24 +176,22 @@ class CongressTradesEngine:
 
         return [dict(t) for t in overlapping]
 
-    def generate_signals(self) -> list[Signal]:
-        """Create low-confidence signals for congress trades overlapping portfolio.
+    def generate_signals(self, user_id: int) -> list[Signal]:
+        """Create low-confidence signals for congress trades overlapping user's portfolio.
 
-        Only creates BUY signals when congress members are buying stocks we hold
-        or are watching via theses. Uses confidence=0.3 as a low base.
+        Args:
+            user_id: ID of the owning user.
 
         Returns:
-            List of Signal objects created. Empty list if no signal_engine or
-            no overlapping buy trades.
+            List of Signal objects created.
         """
         if not self.signal_engine:
             return []
 
-        overlapping = self.check_overlap()
+        overlapping = self.check_overlap(user_id)
         signals: list[Signal] = []
 
-        # Get thesis mapping for symbol -> thesis_id
-        thesis_map = self._build_thesis_map()
+        thesis_map = self._build_thesis_map(user_id)
 
         for trade in overlapping:
             if trade.get("action") != "buy":
@@ -277,23 +209,27 @@ class CongressTradesEngine:
                 reasoning=f"Congress member {trade.get('politician', 'unknown')} bought {symbol}",
                 status=SignalStatus.PENDING,
             )
-            created = self.signal_engine.create_signal(signal)
+            created = self.signal_engine.create_signal(signal, user_id)
             signals.append(created)
 
         logger.info("Generated %d signals from congress trades", len(signals))
         return signals
 
-    def _build_thesis_map(self) -> dict[str, int]:
-        """Build a mapping from symbol to thesis_id for active theses.
+    def _build_thesis_map(self, user_id: int) -> dict[str, int]:
+        """Build a mapping from symbol to thesis_id for a user's active theses.
+
+        Args:
+            user_id: ID of the owning user.
 
         Returns:
-            Dict mapping symbol strings to the thesis ID they belong to.
+            Dict mapping symbol strings to the thesis ID.
         """
         import json
 
         thesis_rows = self.db.fetchall(
             "SELECT id, symbols FROM theses "
-            "WHERE status IN ('active', 'strengthening', 'confirmed')"
+            "WHERE status IN ('active', 'strengthening', 'confirmed') AND user_id = ?",
+            (user_id,),
         )
         mapping: dict[str, int] = {}
         for row in thesis_rows:
@@ -305,22 +241,19 @@ class CongressTradesEngine:
                 continue
         return mapping
 
-    def get_summary(self) -> dict:
-        """Get net buying/selling summary for portfolio-adjacent tickers.
+    def get_summary(self, user_id: int) -> dict:
+        """Get net buying/selling summary for a user's portfolio-adjacent tickers.
+
+        Args:
+            user_id: ID of the owning user.
 
         Returns:
-            Dict with keys:
-                - total_trades: Total congress trades stored.
-                - overlapping: Number of trades overlapping portfolio.
-                - net_by_symbol: Dict mapping symbol to net action count
-                  (positive = net buying, negative = net selling).
-                - recent_buys: List of recent buy trades in portfolio symbols.
-                - recent_sells: List of recent sell trades in portfolio symbols.
+            Dict with total_trades, overlapping, net_by_symbol, recent_buys, recent_sells.
         """
         total = self.db.fetchone("SELECT COUNT(*) as cnt FROM congress_trades")
         total_count = total["cnt"] if total else 0
 
-        overlapping = self.check_overlap()
+        overlapping = self.check_overlap(user_id)
 
         net_by_symbol: dict[str, int] = {}
         recent_buys: list[dict] = []

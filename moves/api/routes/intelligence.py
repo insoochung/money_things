@@ -26,6 +26,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from api.auth import get_current_user
 from api.deps import get_engines
 
 logger = logging.getLogger(__name__)
@@ -194,6 +195,7 @@ async def get_congress_trades(
     days: int = Query(30, ge=1, le=365, description="Days to look back"),
     overlap_only: bool = Query(False, description="Show only portfolio overlaps"),
     engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> list[CongressTrade]:
     """Get recent Congress member trades with portfolio overlap analysis.
 
@@ -312,6 +314,7 @@ async def get_congress_trades(
 async def get_congress_trades_summary(
     days: int = Query(30, ge=1, le=365, description="Days to analyze"),
     engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> CongressSummary:
     """Get Congress trades summary statistics.
 
@@ -416,6 +419,7 @@ async def get_congress_trades_summary(
 async def get_principles(
     active_only: bool = Query(True, description="Show only active principles"),
     engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> list[Principle]:
     """Get investment principles with validation statistics.
 
@@ -499,6 +503,7 @@ async def get_what_if_analysis(
         None, pattern="^(rejected|ignored)$", description="Filter by decision type"
     ),
     engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> list[WhatIfAnalysis]:
     """Get what-if analysis for passed signals.
 
@@ -618,6 +623,7 @@ async def get_what_if_analysis(
 async def get_what_if_summary(
     days: int = Query(90, ge=1, le=365, description="Days to analyze"),
     engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> WhatIfSummary:
     """Get what-if analysis summary statistics.
 

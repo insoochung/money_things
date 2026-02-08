@@ -25,6 +25,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from api.auth import get_current_user
 from api.deps import get_engines
 from config.settings import Mode
 
@@ -121,7 +122,9 @@ class AuditLogEntry(BaseModel):
 
 @router.post("/kill-switch", response_model=KillSwitchResponse)
 async def toggle_kill_switch(
-    request: KillSwitchRequest, engines: Any = Depends(get_engines)
+    request: KillSwitchRequest,
+    engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> KillSwitchResponse:
     """Toggle the system kill switch on or off.
 
@@ -223,7 +226,9 @@ async def toggle_kill_switch(
 
 
 @router.get("/kill-switch/status", response_model=KillSwitchResponse)
-async def get_kill_switch_status(engines: Any = Depends(get_engines)) -> KillSwitchResponse:
+async def get_kill_switch_status(
+    engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+) -> KillSwitchResponse:
     """Get current kill switch status.
 
     Args:
@@ -267,7 +272,10 @@ async def get_kill_switch_status(engines: Any = Depends(get_engines)) -> KillSwi
 
 @router.post("/mode/{mode}", response_model=ModeSwitchResponse)
 async def switch_mode(
-    mode: Mode, switch_request: ModeSwitch, engines: Any = Depends(get_engines)
+    mode: Mode,
+    switch_request: ModeSwitch,
+    engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> ModeSwitchResponse:
     """Switch between mock and live trading modes.
 
@@ -386,6 +394,7 @@ async def get_audit_log(
     actor: str | None = Query(None, description="Filter by actor"),
     days: int = Query(7, ge=1, le=90, description="Days to look back"),
     engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> list[AuditLogEntry]:
     """Retrieve audit log entries with filtering options.
 
@@ -458,3 +467,79 @@ async def get_audit_log(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get audit log: {str(e)}",
         )
+
+
+# ── User Management (Admin Only) ──────────────────────────────
+
+
+class CreateUserRequest(BaseModel):
+    """Request model for creating a new user.
+
+    Attributes:
+        email: User email (must be unique).
+        name: Display name.
+        role: User role ('admin' or 'user').
+    """
+
+    email: str = Field(..., description="User email")
+    name: str = Field(..., description="Display name")
+    role: str = Field("user", pattern="^(admin|user)$", description="User role")
+
+
+def _require_admin(user: dict) -> None:
+    """Raise 403 if user is not an admin."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+
+
+@router.get("/admin/users")
+async def list_users(
+    engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+) -> list[dict]:
+    """List all users (admin only)."""
+    _require_admin(user)
+    try:
+        rows = engines.db.fetchall(
+            "SELECT id, email, name, role, active, created_at, last_login FROM users ORDER BY id"
+        )
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error("Failed to list users: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/admin/users")
+async def create_user(
+    data: CreateUserRequest,
+    engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Create a new user (admin only)."""
+    _require_admin(user)
+    try:
+        # Check for duplicate email
+        existing = engines.db.fetchone("SELECT id FROM users WHERE email = ?", (data.email,))
+        if existing:
+            raise HTTPException(status_code=409, detail="Email already registered")
+
+        engines.db.execute(
+            "INSERT INTO users (email, name, role) VALUES (?, ?, ?)",
+            (data.email, data.name, data.role),
+        )
+        engines.db.connect().commit()
+        new_id = engines.db.fetchone("SELECT last_insert_rowid() as id")["id"]
+
+        # Log creation
+        engines.db.execute(
+            """INSERT INTO audit_log (action, entity_type, entity_id, actor, details)
+               VALUES ('user_created', 'user', ?, ?, ?)""",
+            (new_id, f"user:{user['id']}", f"Created user {data.email} with role {data.role}"),
+        )
+        engines.db.connect().commit()
+
+        return {"id": new_id, "email": data.email, "name": data.name, "role": data.role}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to create user: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))

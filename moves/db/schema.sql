@@ -4,6 +4,19 @@
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
+-- USERS
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    email         TEXT UNIQUE NOT NULL,
+    name          TEXT NOT NULL,
+    telegram_id   TEXT,
+    role          TEXT DEFAULT 'user',
+    settings      TEXT DEFAULT '{}',
+    active        BOOLEAN DEFAULT TRUE,
+    created_at    TEXT DEFAULT (datetime('now')),
+    last_login    TEXT
+);
+
 -- ACCOUNTS
 CREATE TABLE IF NOT EXISTS accounts (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -13,7 +26,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     account_hash  TEXT,
     purpose       TEXT,
     trading_restrictions TEXT,
-    active        BOOLEAN DEFAULT TRUE
+    active        BOOLEAN DEFAULT TRUE,
+    user_id       INTEGER DEFAULT 1 REFERENCES users(id)
 );
 
 -- TRADING WINDOWS
@@ -251,7 +265,8 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
     last_run        TEXT,
     next_run        TEXT,
     status          TEXT DEFAULT 'enabled',
-    error_log       TEXT
+    error_log       TEXT,
+    user_id         INTEGER DEFAULT 1 REFERENCES users(id)
 );
 
 -- AUDIT
@@ -262,7 +277,17 @@ CREATE TABLE IF NOT EXISTS audit_log (
     action      TEXT NOT NULL,
     details     TEXT DEFAULT '',
     entity_type TEXT DEFAULT '',
-    entity_id   INTEGER
+    entity_id   INTEGER,
+    user_id     INTEGER DEFAULT 1 REFERENCES users(id)
+);
+
+-- SHARED THESES
+CREATE TABLE IF NOT EXISTS shared_theses (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    thesis_id     INTEGER REFERENCES theses(id),
+    shared_by     INTEGER REFERENCES users(id),
+    shared_at     TEXT DEFAULT (datetime('now')),
+    active        BOOLEAN DEFAULT TRUE
 );
 
 -- PRICE HISTORY (ported from journal.db)

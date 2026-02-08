@@ -42,7 +42,7 @@ from fastapi.staticfiles import StaticFiles
 
 from api.auth import AuthMiddleware, create_auth_router
 from api.deps import EngineContainer, clear_engines, set_engines
-from api.routes import admin, fund, intelligence, performance, risk, signals, theses, trades
+from api.routes import admin, fund, intelligence, performance, risk, signals, theses, trades, users
 from api.websocket import create_websocket_router
 from broker.mock import MockBroker
 from config.settings import Mode, get_settings
@@ -81,17 +81,33 @@ def _start_scheduler(db: Database, container: Any) -> Any:
             job_congress_trades,
             job_exposure_snapshot,
             job_nav_snapshot,
+            job_news_scan,
             job_price_update,
             job_signal_expiry,
+            job_signal_scan,
             job_stale_thesis_check,
             job_whatif_update,
         )
+        from engine.news_scanner import NewsScanner
         from engine.scheduler import Scheduler
+        from engine.signal_generator import SignalGenerator
         from engine.whatif import WhatIfEngine
 
         analytics = AnalyticsEngine(db=db)
         whatif = WhatIfEngine(db=db)
         congress = CongressTradesEngine(db=db, signal_engine=container.signal_engine)
+        signal_generator = SignalGenerator(
+            db=db,
+            signal_engine=container.signal_engine,
+            thesis_engine=container.thesis_engine,
+            risk_manager=container.risk_manager,
+            pricing=pricing_module,
+        )
+        news_scanner = NewsScanner(
+            db=db,
+            thesis_engine=container.thesis_engine,
+            signal_engine=container.signal_engine,
+        )
 
         tz = "America/New_York"
         scheduler = Scheduler(db=db)
@@ -101,6 +117,20 @@ def _start_scheduler(db: Database, container: Any) -> Any:
             "price_update",
             partial(job_price_update, db),
             CronTrigger(minute="*/15", hour="9-15", day_of_week="mon-fri", timezone=tz),
+        )
+
+        # Signal scan: every 30 min, market hours
+        scheduler.add_job(
+            "signal_scan",
+            partial(job_signal_scan, signal_generator),
+            CronTrigger(minute="*/30", hour="9-15", day_of_week="mon-fri", timezone=tz),
+        )
+
+        # News scan: 3x/day (8 AM, 12 PM, 5 PM ET)
+        scheduler.add_job(
+            "news_scan",
+            partial(job_news_scan, news_scanner),
+            CronTrigger(hour="8,12,17", minute=0, day_of_week="mon-fri", timezone=tz),
         )
 
         # Signal expiry: every hour
@@ -299,6 +329,7 @@ def create_app() -> FastAPI:
     app.include_router(risk.router, prefix="/api/fund", tags=["risk"])
     app.include_router(intelligence.router, prefix="/api/fund", tags=["intelligence"])
     app.include_router(admin.router, prefix="/api/fund", tags=["admin"])
+    app.include_router(users.router, prefix="/api/fund", tags=["users"])
 
     # WebSocket for real-time prices
     app.include_router(create_websocket_router())
@@ -307,7 +338,9 @@ def create_app() -> FastAPI:
     dashboard_dir = Path(__file__).parent.parent / "dashboard"
 
     if dashboard_dir.exists() and (dashboard_dir / "index.html").exists():
-        app.mount("/dashboard", StaticFiles(directory=str(dashboard_dir), html=True), name="dashboard")
+        app.mount(
+            "/dashboard", StaticFiles(directory=str(dashboard_dir), html=True), name="dashboard"
+        )
 
         @app.get("/", response_class=HTMLResponse)
         async def dashboard() -> HTMLResponse:

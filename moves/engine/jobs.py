@@ -1,11 +1,6 @@
 """Scheduled job implementations for the money_moves system.
 
-Each function is a standalone job callable that receives engine references
-and performs a specific periodic task. Jobs are designed to be called by
-the APScheduler wrapper (engine/scheduler.py) from the FastAPI lifespan.
-
-All jobs include error handling and logging. Jobs that need market hours
-checks use is_market_hours() to skip execution outside trading hours.
+Jobs now iterate over all active users or accept user_id.
 """
 
 from __future__ import annotations
@@ -28,14 +23,23 @@ logger = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
 
 
-def is_market_hours() -> bool:
-    """Check if current time is within US market hours (9:30-16:00 ET, Mon-Fri).
+def _get_active_user_ids(db: Database) -> list[int]:
+    """Get all active user IDs from the users table.
 
     Returns:
-        True if within regular trading hours.
+        List of active user IDs. Falls back to [1] if users table doesn't exist yet.
     """
+    try:
+        rows = db.fetchall("SELECT id FROM users WHERE active = TRUE")
+        return [r["id"] for r in rows] if rows else [1]
+    except Exception:
+        return [1]
+
+
+def is_market_hours() -> bool:
+    """Check if current time is within US market hours (9:30-16:00 ET, Mon-Fri)."""
     now_et = datetime.now(ET)
-    if now_et.weekday() >= 5:  # Saturday=5, Sunday=6
+    if now_et.weekday() >= 5:
         return False
     market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
     market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
@@ -43,11 +47,7 @@ def is_market_hours() -> bool:
 
 
 def job_price_update(db: Database) -> None:
-    """Update prices for all open positions.
-
-    Fetches current prices for each symbol in the positions table.
-    Only runs during market hours (enforced by cron trigger).
-    """
+    """Update prices for all open positions (global — prices are shared)."""
     from engine import pricing
 
     rows = db.fetchall(
@@ -64,14 +64,10 @@ def job_price_update(db: Database) -> None:
 
 
 def job_signal_expiry(signal_engine: SignalEngine, db: Database) -> None:
-    """Expire pending signals older than 24 hours.
-
-    Finds signals with status='pending' created more than 24h ago and
-    marks them as 'ignored' via the signal engine's expire method.
-    """
+    """Expire pending signals older than 24 hours for all users."""
     cutoff = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
     rows = db.fetchall(
-        "SELECT id, symbol FROM signals WHERE status = 'pending' AND created_at < ?",
+        "SELECT id, symbol, user_id FROM signals WHERE status = 'pending' AND created_at < ?",
         (cutoff,),
     )
     if not rows:
@@ -81,44 +77,34 @@ def job_signal_expiry(signal_engine: SignalEngine, db: Database) -> None:
     logger.info("signal_expiry: expiring %d signals", len(rows))
     for row in rows:
         try:
-            # Get current price for the what-if tracking
             from engine import pricing
 
             price_data = pricing.get_price(row["symbol"], db=db)
             price = price_data.get("price", 0)
-            signal_engine.expire_signal(row["id"], price_at_pass=price)
+            signal_engine.expire_signal(row["id"], row["user_id"], price_at_pass=price)
             logger.info("signal_expiry: expired signal %d (%s)", row["id"], row["symbol"])
         except Exception:
             logger.exception("signal_expiry: failed to expire signal %d", row["id"])
 
 
-def job_nav_snapshot(analytics: AnalyticsEngine) -> None:
-    """Record portfolio NAV to portfolio_value table.
-
-    Delegates to AnalyticsEngine.snapshot_nav() which queries positions,
-    computes total value, and inserts into portfolio_value.
-    """
-    logger.info("nav_snapshot: recording NAV")
-    analytics.snapshot_nav()
+def job_nav_snapshot(analytics: AnalyticsEngine, db: Database) -> None:
+    """Record portfolio NAV for all active users."""
+    for user_id in _get_active_user_ids(db):
+        logger.info("nav_snapshot: recording NAV for user %d", user_id)
+        analytics.snapshot_nav(user_id)
     logger.info("nav_snapshot: complete")
 
 
-def job_whatif_update(whatif: WhatIfEngine) -> None:
-    """Update current prices for all what-if entries.
-
-    Delegates to WhatIfEngine.update_all() which refreshes hypothetical P&L
-    for all tracked rejected/ignored signals.
-    """
-    logger.info("whatif_update: updating all what-if entries")
-    count = whatif.update_all()
-    logger.info("whatif_update: updated %d entries", count)
+def job_whatif_update(whatif: WhatIfEngine, db: Database) -> None:
+    """Update what-if entries for all active users."""
+    for user_id in _get_active_user_ids(db):
+        logger.info("whatif_update: updating for user %d", user_id)
+        count = whatif.update_all(user_id)
+        logger.info("whatif_update: updated %d entries for user %d", count, user_id)
 
 
 def job_congress_trades(congress: CongressTradesEngine) -> None:
-    """Scrape recent congressional trades.
-
-    Delegates to CongressTradesEngine.fetch_recent() and store_trades().
-    """
+    """Scrape recent congressional trades (global — no user_id for scraping)."""
     logger.info("congress_trades: fetching recent trades")
     trades = congress.fetch_recent(days=3)
     if trades:
@@ -128,40 +114,36 @@ def job_congress_trades(congress: CongressTradesEngine) -> None:
         logger.info("congress_trades: no new trades found")
 
 
-def job_exposure_snapshot(analytics: AnalyticsEngine) -> None:
-    """Record exposure breakdown to exposure_snapshots table.
-
-    Delegates to AnalyticsEngine.snapshot_exposure().
-    """
-    logger.info("exposure_snapshot: recording exposure")
-    analytics.snapshot_exposure()
+def job_exposure_snapshot(analytics: AnalyticsEngine, db: Database) -> None:
+    """Record exposure breakdown for all active users."""
+    for user_id in _get_active_user_ids(db):
+        logger.info("exposure_snapshot: recording exposure for user %d", user_id)
+        analytics.snapshot_exposure(user_id)
     logger.info("exposure_snapshot: complete")
 
 
 def job_stale_thesis_check(thesis_engine: ThesisEngine, db: Database) -> None:
-    """Flag theses older than 30 days without updates as weakening.
-
-    Queries active theses whose last update (updated_at or created_at) is
-    older than 30 days and transitions them to 'weakening' status.
-    """
+    """Flag stale theses as weakening for all active users."""
     cutoff = (datetime.now(UTC) - timedelta(days=30)).isoformat()
-    rows = db.fetchall(
-        "SELECT id FROM theses WHERE status = 'active' AND "
-        "COALESCE(updated_at, created_at) < ?",
-        (cutoff,),
-    )
-    if not rows:
-        logger.info("stale_thesis_check: no stale theses")
-        return
+    for user_id in _get_active_user_ids(db):
+        rows = db.fetchall(
+            "SELECT id FROM theses WHERE status = 'active' AND user_id = ? AND "
+            "COALESCE(updated_at, created_at) < ?",
+            (user_id, cutoff),
+        )
+        if not rows:
+            logger.info("stale_thesis_check: no stale theses for user %d", user_id)
+            continue
 
-    logger.info("stale_thesis_check: found %d stale theses", len(rows))
-    for row in rows:
-        try:
-            thesis_engine.transition_status(
-                row["id"],
-                new_status="weakening",
-                reason="Auto-flagged: no update in 30+ days",
-            )
-            logger.info("stale_thesis_check: flagged thesis %d as weakening", row["id"])
-        except Exception:
-            logger.exception("stale_thesis_check: failed to flag thesis %d", row["id"])
+        logger.info("stale_thesis_check: found %d stale theses for user %d", len(rows), user_id)
+        for row in rows:
+            try:
+                thesis_engine.transition_status(
+                    row["id"],
+                    new_status="weakening",
+                    reason="Auto-flagged: no update in 30+ days",
+                    user_id=user_id,
+                )
+                logger.info("stale_thesis_check: flagged thesis %d as weakening", row["id"])
+            except Exception:
+                logger.exception("stale_thesis_check: failed to flag thesis %d", row["id"])

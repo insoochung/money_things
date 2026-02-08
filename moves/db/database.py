@@ -52,6 +52,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
+MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
 def dict_row_factory(cursor: sqlite3.Cursor, row: tuple) -> dict[str, Any]:
@@ -245,6 +246,30 @@ class Database:
         conn = self.connect()
         conn.executescript(schema_sql)
         logger.info("Schema initialized for %s", self.db_path)
+        self._run_pending_migrations()
+
+    def _run_pending_migrations(self) -> None:
+        """Run any pending migrations from the migrations directory.
+
+        Scans the migrations directory for SQL files named NNN_*.sql,
+        checks the current schema version, and applies any migrations
+        with version numbers higher than the current version.
+        """
+        if not MIGRATIONS_DIR.exists():
+            return
+        current = self.get_schema_version()
+        migration_files = sorted(MIGRATIONS_DIR.glob("*.sql"))
+        for mf in migration_files:
+            # Extract version number from filename (e.g., 002_multi_user.sql -> 2)
+            try:
+                version = int(mf.name.split("_", 1)[0])
+            except (ValueError, IndexError):
+                continue
+            if version <= current:
+                continue
+            description = mf.stem.split("_", 1)[1] if "_" in mf.stem else mf.stem
+            sql = mf.read_text()
+            self.apply_migration(version, sql, description)
 
     def get_schema_version(self) -> int:
         """Get the current schema version number.

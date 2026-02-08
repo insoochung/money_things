@@ -25,6 +25,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from api.auth import get_current_user
 from api.deps import get_engines
 
 logger = logging.getLogger(__name__)
@@ -167,7 +168,9 @@ class MacroIndicators(BaseModel):
 
 
 @router.get("/risk", response_model=dict)
-async def get_risk_metrics(engines: Any = Depends(get_engines)) -> dict:
+async def get_risk_metrics(
+    engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+) -> dict:
     """Get comprehensive portfolio risk metrics and limit status.
 
     Returns current risk metrics, limit utilization, and risk alerts.
@@ -265,7 +268,9 @@ async def get_risk_metrics(engines: Any = Depends(get_engines)) -> dict:
 
 
 @router.get("/correlation", response_model=CorrelationMatrix)
-async def get_correlation_matrix(engines: Any = Depends(get_engines)) -> CorrelationMatrix:
+async def get_correlation_matrix(
+    engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+) -> CorrelationMatrix:
     """Get position correlation matrix and diversification analysis.
 
     Calculates pairwise correlations between portfolio positions and
@@ -365,7 +370,9 @@ async def get_correlation_matrix(engines: Any = Depends(get_engines)) -> Correla
 
 
 @router.get("/heatmap", response_model=RiskHeatmap)
-async def get_risk_heatmap(engines: Any = Depends(get_engines)) -> RiskHeatmap:
+async def get_risk_heatmap(
+    engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+) -> RiskHeatmap:
     """Get risk heatmap data for visualization.
 
     Provides position and sector risk data formatted for heatmap
@@ -513,7 +520,9 @@ async def get_risk_heatmap(engines: Any = Depends(get_engines)) -> RiskHeatmap:
 
 
 @router.get("/macro-indicators", response_model=MacroIndicators)
-async def get_macro_indicators(engines: Any = Depends(get_engines)) -> MacroIndicators:
+async def get_macro_indicators(
+    engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+) -> MacroIndicators:
     """Get current macro economic indicators.
 
     Fetches key macro indicators that affect portfolio risk including

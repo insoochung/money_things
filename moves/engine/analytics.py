@@ -1,7 +1,6 @@
 """Portfolio analytics engine for computing performance metrics.
 
-Provides Sharpe ratio, benchmark comparison, win rates, drawdown analysis,
-Value-at-Risk, stress testing, and NAV/exposure snapshotting.
+All methods now accept user_id for multi-user scoping.
 """
 
 from __future__ import annotations
@@ -18,34 +17,23 @@ logger = logging.getLogger(__name__)
 
 
 class AnalyticsEngine:
-    """Computes portfolio performance metrics from database history.
-
-    All calculations use actual price/NAV data stored in the database.
-    No LLM-generated numbers — everything is computed mathematically.
-
-    Attributes:
-        db: Database instance for querying historical data.
-    """
+    """Computes portfolio performance metrics from database history."""
 
     def __init__(self, db: Database) -> None:
-        """Initialize the analytics engine.
-
-        Args:
-            db: Database instance with portfolio_value, trades, price_history tables.
-        """
         self.db = db
 
-    def sharpe_ratio(self, days: int = 252, rf: float = 0.045) -> float:
+    def sharpe_ratio(self, user_id: int, days: int = 252, rf: float = 0.045) -> float:
         """Calculate annualized Sharpe ratio from daily NAV returns.
 
         Args:
+            user_id: ID of the owning user.
             days: Number of trading days to look back.
-            rf: Annual risk-free rate (default 4.5%).
+            rf: Annual risk-free rate.
 
         Returns:
             Annualized Sharpe ratio. Returns 0.0 if insufficient data.
         """
-        returns = self._daily_returns(days)
+        returns = self._daily_returns(user_id, days)
         if len(returns) < 2:
             return 0.0
 
@@ -59,18 +47,17 @@ class AnalyticsEngine:
             return 0.0
         return (mean_excess / std) * math.sqrt(252)
 
-    def benchmark_comparison(self, benchmark: str = "SPY") -> dict[str, float]:
+    def benchmark_comparison(self, user_id: int, benchmark: str = "SPY") -> dict[str, float]:
         """Compare portfolio returns against a benchmark.
 
-        Computes alpha, beta, and correlation using daily returns.
-
         Args:
+            user_id: ID of the owning user.
             benchmark: Benchmark ticker symbol.
 
         Returns:
-            Dict with keys: alpha, beta, correlation. Returns zeros if insufficient data.
+            Dict with alpha, beta, correlation.
         """
-        port_returns = self._daily_returns(252)
+        port_returns = self._daily_returns(user_id, 252)
         bench_returns = self._benchmark_returns(benchmark, len(port_returns))
 
         n = min(len(port_returns), len(bench_returns))
@@ -88,26 +75,28 @@ class AnalyticsEngine:
         var_p = sum((p - mean_p) ** 2 for p in pr) / (n - 1)
 
         beta = cov / var_b if var_b > 0 else 0.0
-        alpha = (mean_p - beta * mean_b) * 252  # annualized
+        alpha = (mean_p - beta * mean_b) * 252
 
         denom = math.sqrt(var_p * var_b) if var_p > 0 and var_b > 0 else 0.0
         correlation = cov / denom if denom > 0 else 0.0
 
         return {"alpha": alpha, "beta": beta, "correlation": correlation}
 
-    def win_rate(self, group_by: str = "all") -> dict[str, Any]:
+    def win_rate(self, user_id: int, group_by: str = "all") -> dict[str, Any]:
         """Calculate win rates from closed trades.
 
         Args:
-            group_by: Grouping method — 'all', 'conviction', 'source', 'thesis', 'domain'.
+            user_id: ID of the owning user.
+            group_by: Grouping method.
 
         Returns:
-            Dict with win_rate, total_trades, wins, losses, and optionally grouped breakdowns.
+            Dict with win_rate, total_trades, wins, losses.
         """
         trades = self.db.fetchall(
             "SELECT t.realized_pnl, t.signal_id, s.confidence, s.source, s.thesis_id "
             "FROM trades t LEFT JOIN signals s ON t.signal_id = s.id "
-            "WHERE t.realized_pnl IS NOT NULL"
+            "WHERE t.realized_pnl IS NOT NULL AND t.user_id = ?",
+            (user_id,),
         )
 
         if not trades:
@@ -138,11 +127,11 @@ class AnalyticsEngine:
             }
         return result
 
-    def calibration(self) -> list[dict[str, Any]]:
-        """Analyze confidence calibration: predicted confidence vs actual win rates.
+    def calibration(self, user_id: int) -> list[dict[str, Any]]:
+        """Analyze confidence calibration.
 
-        Buckets signals by confidence into 10% ranges and compares predicted
-        vs actual win rates.
+        Args:
+            user_id: ID of the owning user.
 
         Returns:
             List of dicts with bucket, predicted, actual, count.
@@ -150,13 +139,14 @@ class AnalyticsEngine:
         trades = self.db.fetchall(
             "SELECT s.confidence, t.realized_pnl "
             "FROM trades t JOIN signals s ON t.signal_id = s.id "
-            "WHERE t.realized_pnl IS NOT NULL AND s.confidence IS NOT NULL"
+            "WHERE t.realized_pnl IS NOT NULL AND s.confidence IS NOT NULL AND t.user_id = ?",
+            (user_id,),
         )
 
         buckets: dict[str, list[dict]] = {}
         for t in trades:
             conf = t["confidence"]
-            bucket_val = int(conf * 10) / 10  # floor to nearest 0.1
+            bucket_val = int(conf * 10) / 10
             bucket_label = f"{bucket_val:.0%}-{bucket_val + 0.1:.0%}"
             buckets.setdefault(bucket_label, []).append(t)
 
@@ -174,13 +164,19 @@ class AnalyticsEngine:
             )
         return result
 
-    def max_drawdown(self) -> dict[str, Any]:
+    def max_drawdown(self, user_id: int) -> dict[str, Any]:
         """Calculate maximum and current drawdown from NAV history.
+
+        Args:
+            user_id: ID of the owning user.
 
         Returns:
             Dict with max_dd, current_dd, days_underwater, peak_date, trough_date.
         """
-        navs = self.db.fetchall("SELECT date, total_value FROM portfolio_value ORDER BY date")
+        navs = self.db.fetchall(
+            "SELECT date, total_value FROM portfolio_value WHERE user_id = ? ORDER BY date",
+            (user_id,),
+        )
 
         if not navs:
             return {
@@ -222,15 +218,16 @@ class AnalyticsEngine:
             "trough_date": max_dd_trough_date,
         }
 
-    def var_95(self) -> float:
+    def var_95(self, user_id: int) -> float:
         """Calculate parametric 95% Value-at-Risk.
 
-        Uses daily returns to estimate the 5th percentile loss.
+        Args:
+            user_id: ID of the owning user.
 
         Returns:
-            VaR as a positive fraction (e.g., 0.02 = 2% daily loss at 95% confidence).
+            VaR as a positive fraction.
         """
-        returns = self._daily_returns(252)
+        returns = self._daily_returns(user_id, 252)
         if len(returns) < 2:
             return 0.0
 
@@ -238,27 +235,26 @@ class AnalyticsEngine:
         variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
         std = math.sqrt(variance)
 
-        # 95% VaR = mean - 1.645 * std (parametric, normal assumption)
         var = -(mean - 1.645 * std)
         return max(var, 0.0)
 
-    def stress_test(self, market_drop: float = -0.20) -> dict[str, Any]:
+    def stress_test(self, user_id: int, market_drop: float = -0.20) -> dict[str, Any]:
         """Estimate portfolio impact from a market stress scenario.
 
-        Uses beta to estimate position-level impact of a market decline.
-
         Args:
-            market_drop: Assumed market decline as a negative fraction (e.g., -0.20).
+            user_id: ID of the owning user.
+            market_drop: Assumed market decline as a negative fraction.
 
         Returns:
             Dict with scenario, estimated_loss, estimated_nav, current_nav.
         """
         nav_row = self.db.fetchone(
-            "SELECT total_value FROM portfolio_value ORDER BY date DESC LIMIT 1"
+            "SELECT total_value FROM portfolio_value WHERE user_id = ? ORDER BY date DESC LIMIT 1",
+            (user_id,),
         )
         current_nav = nav_row["total_value"] if nav_row else 0.0
 
-        bench = self.benchmark_comparison()
+        bench = self.benchmark_comparison(user_id)
         beta = bench.get("beta", 1.0) or 1.0
 
         estimated_loss_pct = market_drop * beta
@@ -273,10 +269,11 @@ class AnalyticsEngine:
             "current_nav": current_nav,
         }
 
-    def correlation_matrix(self) -> dict[str, Any]:
+    def correlation_matrix(self, user_id: int) -> dict[str, Any]:
         """Compute return correlations between theses.
 
-        Groups trades by thesis and computes pairwise return correlations.
+        Args:
+            user_id: ID of the owning user.
 
         Returns:
             Dict mapping thesis pairs to correlation values.
@@ -284,7 +281,8 @@ class AnalyticsEngine:
         trades = self.db.fetchall(
             "SELECT s.thesis_id, t.realized_pnl, t.total_value "
             "FROM trades t JOIN signals s ON t.signal_id = s.id "
-            "WHERE s.thesis_id IS NOT NULL AND t.realized_pnl IS NOT NULL"
+            "WHERE s.thesis_id IS NOT NULL AND t.realized_pnl IS NOT NULL AND t.user_id = ?",
+            (user_id,),
         )
 
         thesis_returns: dict[int, list[float]] = {}
@@ -306,10 +304,11 @@ class AnalyticsEngine:
 
         return result
 
-    def nav_history(self, days: int = 365) -> list[dict[str, Any]]:
-        """Retrieve NAV history from portfolio_value table.
+    def nav_history(self, user_id: int, days: int = 365) -> list[dict[str, Any]]:
+        """Retrieve NAV history.
 
         Args:
+            user_id: ID of the owning user.
             days: Number of days to look back.
 
         Returns:
@@ -317,51 +316,56 @@ class AnalyticsEngine:
         """
         rows = self.db.fetchall(
             "SELECT date, total_value FROM portfolio_value "
-            "WHERE date >= date('now', ? || ' days') ORDER BY date",
-            (f"-{days}",),
+            "WHERE user_id = ? AND date >= date('now', ? || ' days') ORDER BY date",
+            (user_id, f"-{days}"),
         )
         return [{"date": r["date"], "nav": r["total_value"]} for r in rows]
 
-    def snapshot_nav(self) -> None:
+    def snapshot_nav(self, user_id: int) -> None:
         """Record current NAV to portfolio_value table.
 
-        Sums position values and cash to compute total portfolio value,
-        then inserts a record for today's date.
+        Args:
+            user_id: ID of the owning user.
         """
         today = datetime.now(UTC).strftime("%Y-%m-%d")
 
-        # Get latest cash from most recent portfolio_value
         latest = self.db.fetchone(
-            "SELECT cash, cost_basis FROM portfolio_value ORDER BY date DESC LIMIT 1"
+            "SELECT cash, cost_basis FROM portfolio_value WHERE user_id = ? ORDER BY date DESC LIMIT 1",
+            (user_id,),
         )
         cash = latest["cash"] if latest else 0.0
         cost_basis = latest["cost_basis"] if latest else 0.0
 
-        # Sum position values (shares * current price from price_history)
         positions = self.db.fetchall(
             "SELECT p.symbol, p.shares, p.avg_cost, "
             "COALESCE((SELECT ph.close FROM price_history ph "
             "WHERE ph.symbol = p.symbol ORDER BY ph.timestamp DESC LIMIT 1), p.avg_cost) as price "
-            "FROM positions p WHERE p.shares > 0"
+            "FROM positions p WHERE p.shares > 0 AND p.user_id = ?",
+            (user_id,),
         )
 
         long_value = sum(p["shares"] * p["price"] for p in positions if p["shares"] > 0)
         total_value = cash + long_value
 
         self.db.execute(
-            "INSERT INTO portfolio_value (date, total_value, long_value, cash, cost_basis) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (today, total_value, long_value, cash, cost_basis),
+            "INSERT INTO portfolio_value (date, total_value, long_value, cash, cost_basis, user_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (today, total_value, long_value, cash, cost_basis, user_id),
         )
         self.db.connect().commit()
         logger.info("NAV snapshot: %s = %.2f", today, total_value)
 
-    def snapshot_exposure(self) -> None:
-        """Record current exposure breakdown to exposure_snapshots table."""
+    def snapshot_exposure(self, user_id: int) -> None:
+        """Record current exposure breakdown to exposure_snapshots table.
+
+        Args:
+            user_id: ID of the owning user.
+        """
         today = datetime.now(UTC).strftime("%Y-%m-%d")
 
         nav_row = self.db.fetchone(
-            "SELECT total_value FROM portfolio_value ORDER BY date DESC LIMIT 1"
+            "SELECT total_value FROM portfolio_value WHERE user_id = ? ORDER BY date DESC LIMIT 1",
+            (user_id,),
         )
         nav = nav_row["total_value"] if nav_row else 0.0
 
@@ -369,7 +373,8 @@ class AnalyticsEngine:
             "SELECT p.symbol, p.shares, p.side, p.thesis_id, "
             "COALESCE((SELECT ph.close FROM price_history ph "
             "WHERE ph.symbol = p.symbol ORDER BY ph.timestamp DESC LIMIT 1), p.avg_cost) as price "
-            "FROM positions p WHERE p.shares > 0"
+            "FROM positions p WHERE p.shares > 0 AND p.user_id = ?",
+            (user_id,),
         )
 
         long_val = sum(p["shares"] * p["price"] for p in positions if p["side"] == "long")
@@ -382,7 +387,6 @@ class AnalyticsEngine:
         gross_exp = gross / nav if nav > 0 else 0.0
         net_exp = net / nav if nav > 0 else 0.0
 
-        # Group by thesis
         by_thesis: dict[str, float] = {}
         for p in positions:
             tid = str(p.get("thesis_id", "none"))
@@ -391,28 +395,21 @@ class AnalyticsEngine:
 
         self.db.execute(
             "INSERT INTO exposure_snapshots "
-            "(date, gross_exposure, net_exposure, long_pct, short_pct, by_thesis) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (today, gross_exp, net_exp, long_pct, short_pct, json.dumps(by_thesis)),
+            "(date, gross_exposure, net_exposure, long_pct, short_pct, by_thesis, user_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (today, gross_exp, net_exp, long_pct, short_pct, json.dumps(by_thesis), user_id),
         )
         self.db.connect().commit()
         logger.info("Exposure snapshot: gross=%.2f net=%.2f", gross_exp, net_exp)
 
     # --- Private helpers ---
 
-    def _daily_returns(self, days: int) -> list[float]:
-        """Extract daily return percentages from portfolio_value table.
-
-        Args:
-            days: Number of days to look back.
-
-        Returns:
-            List of daily return fractions.
-        """
+    def _daily_returns(self, user_id: int, days: int) -> list[float]:
+        """Extract daily return percentages from portfolio_value table."""
         rows = self.db.fetchall(
             "SELECT total_value FROM portfolio_value "
-            "WHERE date >= date('now', ? || ' days') ORDER BY date",
-            (f"-{days}",),
+            "WHERE user_id = ? AND date >= date('now', ? || ' days') ORDER BY date",
+            (user_id, f"-{days}"),
         )
         if len(rows) < 2:
             return []
@@ -426,15 +423,7 @@ class AnalyticsEngine:
         return returns
 
     def _benchmark_returns(self, symbol: str, count: int) -> list[float]:
-        """Fetch benchmark daily returns from price_history.
-
-        Args:
-            symbol: Benchmark ticker.
-            count: Approximate number of returns needed.
-
-        Returns:
-            List of daily return fractions.
-        """
+        """Fetch benchmark daily returns from price_history."""
         rows = self.db.fetchall(
             "SELECT close FROM price_history WHERE symbol = ? "
             "AND interval = '1d' ORDER BY timestamp LIMIT ?",
@@ -464,15 +453,7 @@ class AnalyticsEngine:
 
     @staticmethod
     def _correlation(x: list[float], y: list[float]) -> float:
-        """Compute Pearson correlation between two series.
-
-        Args:
-            x: First series of values.
-            y: Second series of values.
-
-        Returns:
-            Correlation coefficient in [-1, 1].
-        """
+        """Compute Pearson correlation between two series."""
         n = len(x)
         mean_x = sum(x) / n
         mean_y = sum(y) / n

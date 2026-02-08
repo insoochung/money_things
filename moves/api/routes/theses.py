@@ -25,6 +25,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from api.auth import get_current_user
 from api.deps import get_engines
 
 logger = logging.getLogger(__name__)
@@ -130,7 +131,9 @@ class ThesisResponse(BaseModel):
 
 @router.get("/theses", response_model=list[ThesisResponse])
 async def list_theses(
-    status: str | None = None, engines: Any = Depends(get_engines)
+    status: str | None = None,
+    engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> list[ThesisResponse]:
     """List all theses with optional status filtering.
 
@@ -271,7 +274,9 @@ async def list_theses(
 
 @router.post("/theses", response_model=ThesisResponse)
 async def create_thesis(
-    thesis_request: ThesisRequest, engines: Any = Depends(get_engines)
+    thesis_request: ThesisRequest,
+    engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> ThesisResponse:
     """Create a new investment thesis.
 
@@ -366,7 +371,10 @@ async def create_thesis(
 
 @router.put("/theses/{thesis_id}", response_model=ThesisResponse)
 async def update_thesis(
-    thesis_id: int, thesis_update: ThesisUpdate, engines: Any = Depends(get_engines)
+    thesis_id: int,
+    thesis_update: ThesisUpdate,
+    engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> ThesisResponse:
     """Update thesis status with reason and evidence.
 
@@ -523,3 +531,163 @@ async def update_thesis(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update thesis: {str(e)}",
         )
+
+
+# ── Thesis Sharing ──────────────────────────────────────────────
+
+
+@router.post("/theses/{thesis_id}/share")
+async def share_thesis(
+    thesis_id: int, engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+) -> dict:
+    """Share a thesis for others to clone.
+
+    Creates a shared_theses record so other users can discover and clone
+    this thesis into their own portfolio.
+
+    Args:
+        thesis_id: ID of the thesis to share.
+        engines: Engine container with database.
+        user: Authenticated user.
+
+    Returns:
+        Confirmation with share details.
+    """
+    try:
+        thesis = engines.db.fetchone(
+            "SELECT * FROM theses WHERE id = ? AND user_id = ?",
+            (thesis_id, user["id"]),
+        )
+        if not thesis:
+            raise HTTPException(status_code=404, detail="Thesis not found or not owned by you")
+
+        # Check if already shared
+        existing = engines.db.fetchone(
+            "SELECT id FROM shared_theses WHERE thesis_id = ? AND active = 1",
+            (thesis_id,),
+        )
+        if existing:
+            return {"status": "already_shared", "thesis_id": thesis_id}
+
+        engines.db.execute(
+            "INSERT INTO shared_theses (thesis_id, shared_by) VALUES (?, ?)",
+            (thesis_id, user["id"]),
+        )
+        engines.db.connect().commit()
+        return {"status": "shared", "thesis_id": thesis_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to share thesis %s: %s", thesis_id, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/theses/{thesis_id}/share")
+async def unshare_thesis(
+    thesis_id: int, engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+) -> dict:
+    """Unshare a thesis."""
+    try:
+        engines.db.execute(
+            """UPDATE shared_theses SET active = 0
+               WHERE thesis_id = ? AND shared_by = ? AND active = 1""",
+            (thesis_id, user["id"]),
+        )
+        engines.db.connect().commit()
+        return {"status": "unshared", "thesis_id": thesis_id}
+    except Exception as e:
+        logger.error("Failed to unshare thesis %s: %s", thesis_id, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/shared-theses")
+async def list_shared_theses(
+    engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+) -> list[dict]:
+    """Browse theses shared by other users."""
+    try:
+        rows = engines.db.fetchall(
+            """SELECT st.id as share_id, st.shared_at, st.thesis_id,
+                      t.title, t.thesis_text, t.strategy, t.symbols, t.conviction, t.horizon,
+                      u.name as shared_by_name
+               FROM shared_theses st
+               JOIN theses t ON st.thesis_id = t.id
+               JOIN users u ON st.shared_by = u.id
+               WHERE st.active = 1 AND st.shared_by != ?
+               ORDER BY st.shared_at DESC""",
+            (user["id"],),
+        )
+        import json
+
+        result = []
+        for row in rows:
+            result.append(
+                {
+                    "share_id": row["share_id"],
+                    "thesis_id": row["thesis_id"],
+                    "title": row["title"],
+                    "thesis_text": row["thesis_text"],
+                    "strategy": row["strategy"],
+                    "symbols": json.loads(row["symbols"]) if row["symbols"] else [],
+                    "conviction": row["conviction"],
+                    "horizon": row["horizon"],
+                    "shared_by": row["shared_by_name"],
+                    "shared_at": row["shared_at"],
+                }
+            )
+        return result
+    except Exception as e:
+        logger.error("Failed to list shared theses: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/shared-theses/{thesis_id}/clone")
+async def clone_thesis(
+    thesis_id: int, engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+) -> dict:
+    """Clone a shared thesis into your portfolio.
+
+    Creates a new thesis owned by the current user, copying all fields from
+    the shared thesis. The clone tracks its lineage via cloned_from.
+    """
+    try:
+        # Verify it's actually shared
+        shared = engines.db.fetchone(
+            """SELECT t.* FROM shared_theses st
+               JOIN theses t ON st.thesis_id = t.id
+               WHERE st.thesis_id = ? AND st.active = 1""",
+            (thesis_id,),
+        )
+        if not shared:
+            raise HTTPException(status_code=404, detail="Shared thesis not found")
+
+        # Clone: insert a new thesis for this user
+        engines.db.execute(
+            """INSERT INTO theses (title, thesis_text, strategy, symbols, universe_keywords,
+                   validation_criteria, failure_criteria, horizon, conviction, source_module,
+                   user_id, cloned_from, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')""",
+            (
+                shared["title"],
+                shared["thesis_text"],
+                shared["strategy"],
+                shared["symbols"],
+                shared["universe_keywords"],
+                shared["validation_criteria"],
+                shared["failure_criteria"],
+                shared["horizon"],
+                shared["conviction"],
+                shared["source_module"],
+                user["id"],
+                thesis_id,
+            ),
+        )
+        engines.db.connect().commit()
+
+        new_id = engines.db.fetchone("SELECT last_insert_rowid() as id")["id"]
+        return {"status": "cloned", "new_thesis_id": new_id, "cloned_from": thesis_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to clone thesis %s: %s", thesis_id, e)
+        raise HTTPException(status_code=500, detail=str(e))

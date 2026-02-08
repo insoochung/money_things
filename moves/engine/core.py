@@ -1,11 +1,6 @@
 """Central orchestrator for the Money Moves system.
 
-Coordinates startup, shutdown, and the main signal processing pipeline. All engine
-modules (thesis, signals, risk, principles, approval, what-if, discovery) are
-initialized here and composed into a unified workflow.
-
-Classes:
-    MoneyMovesCore: System orchestrator that wires together all engines.
+All pipeline methods now accept user_id for multi-user scoping.
 """
 
 from __future__ import annotations
@@ -34,35 +29,11 @@ logger = logging.getLogger(__name__)
 
 
 class MoneyMovesCore:
-    """Central orchestrator for the Money Moves system.
-
-    Wires together all engine modules and provides high-level methods for
-    startup, shutdown, signal processing, and system health monitoring.
-
-    Attributes:
-        db: Database instance.
-        broker: Broker implementation (mock or live).
-        settings: Configuration dict with mode, auto-approve thresholds, etc.
-        thesis_engine: Manages investment theses.
-        signal_engine: Signal creation, scoring, and lifecycle.
-        risk_manager: Pre-trade risk checks and kill switch.
-        principles_engine: Self-learning investment rules.
-        whatif_engine: Tracks hypothetical outcomes of passed signals.
-        discovery_engine: Scans for new thesis-aligned tickers.
-        approval_workflow: Auto-approve logic and routing.
-    """
+    """Central orchestrator for the Money Moves system."""
 
     def __init__(
         self, db: Database, broker: Broker, settings: dict[str, Any] | None = None
     ) -> None:
-        """Initialize all engines.
-
-        Args:
-            db: Database instance (schema must already be initialized).
-            broker: Broker implementation for order execution.
-            settings: Optional configuration dict. Keys used:
-                - mode: 'mock' or 'live'
-        """
         self.db = db
         self.broker = broker
         self.settings = settings or {}
@@ -80,18 +51,17 @@ class MoneyMovesCore:
             risk_manager=self.risk_manager,
         )
 
-    async def startup(self) -> dict[str, Any]:
+    async def startup(self, user_id: int) -> dict[str, Any]:
         """Initialize all engines and verify system health.
 
-        Checks database connectivity, broker connection, risk limits, and kill
-        switch status. Logs a startup summary.
+        Args:
+            user_id: ID of the user starting the system.
 
         Returns:
             Dict with startup status and any warnings.
         """
         warnings: list[str] = []
 
-        # Check DB connectivity
         try:
             self.db.fetchone("SELECT 1")
         except Exception as exc:
@@ -99,27 +69,25 @@ class MoneyMovesCore:
             logger.error(msg)
             return {"status": "error", "message": msg}
 
-        # Check broker connection
         try:
             await self.broker.get_account_balance()
         except Exception as exc:
             warnings.append(f"Broker connection issue: {exc}")
             logger.warning("Broker connectivity check failed: %s", exc)
 
-        # Check risk limits exist
-        limits = self.db.fetchall("SELECT * FROM risk_limits")
+        limits = self.db.fetchall(
+            "SELECT * FROM risk_limits WHERE user_id = ?", (user_id,)
+        )
         if not limits:
             warnings.append("No risk limits configured")
 
-        # Check kill switch
-        kill_active = self.risk_manager.is_kill_switch_active()
+        kill_active = self.risk_manager.is_kill_switch_active(user_id)
         if kill_active:
             warnings.append("Kill switch is ACTIVE — trading halted")
 
-        # Count pending signals
         pending = self.db.fetchone(
-            "SELECT COUNT(*) as cnt FROM signals WHERE status = ?",
-            (SignalStatus.PENDING,),
+            "SELECT COUNT(*) as cnt FROM signals WHERE status = ? AND user_id = ?",
+            (SignalStatus.PENDING, user_id),
         )
         pending_count = pending["cnt"] if pending else 0
 
@@ -144,27 +112,22 @@ class MoneyMovesCore:
         }
 
     async def shutdown(self) -> None:
-        """Gracefully shut down all engines.
-
-        Logs shutdown and closes database connection.
-        """
+        """Gracefully shut down all engines."""
         logger.info("MoneyMovesCore shutting down")
         _audit(self.db, "system_shutdown", "Graceful shutdown")
         self.db.close()
 
-    async def process_signal(self, signal_id: int) -> dict[str, Any]:
+    async def process_signal(self, signal_id: int, user_id: int) -> dict[str, Any]:
         """Full signal processing pipeline: risk check → approval → execution.
-
-        Loads the signal, runs pre-trade risk checks, and either auto-approves
-        and executes or leaves it pending for manual approval.
 
         Args:
             signal_id: ID of the signal to process.
+            user_id: ID of the owning user.
 
         Returns:
-            Dict with processing result including status and any error message.
+            Dict with processing result.
         """
-        signal = self.signal_engine.get_signal(signal_id)
+        signal = self.signal_engine.get_signal(signal_id, user_id)
         if not signal:
             return {"status": "error", "message": f"Signal {signal_id} not found"}
 
@@ -175,9 +138,9 @@ class MoneyMovesCore:
             }
 
         # Pre-trade risk checks
-        risk_result = self.risk_manager.pre_trade_check(signal)
+        risk_result = self.risk_manager.pre_trade_check(signal, user_id)
         if not risk_result:
-            self.signal_engine.cancel_signal(signal_id)
+            self.signal_engine.cancel_signal(signal_id, user_id)
             return {
                 "status": "risk_blocked",
                 "signal_id": signal_id,
@@ -185,40 +148,36 @@ class MoneyMovesCore:
             }
 
         # Route through approval workflow
-        approval_result = self.approval_workflow.process_signal(signal)
+        approval_result = self.approval_workflow.process_signal(signal, user_id)
 
         if approval_result["status"] == "auto_approved":
-            exec_result = await self.execute_approved_signal(signal_id)
+            exec_result = await self.execute_approved_signal(signal_id, user_id)
             return {
                 "status": "executed" if exec_result.get("status") == "executed" else "exec_failed",
                 "signal_id": signal_id,
                 "execution": exec_result,
             }
 
-        # Signal remains pending for manual Telegram approval
         return {
             "status": "pending_approval",
             "signal_id": signal_id,
         }
 
-    async def execute_approved_signal(self, signal_id: int) -> dict[str, Any]:
+    async def execute_approved_signal(self, signal_id: int, user_id: int) -> dict[str, Any]:
         """Execute an approved signal through the broker.
-
-        Loads the signal, creates an order, executes via the broker, records
-        the trade, and updates positions/lots.
 
         Args:
             signal_id: ID of the approved signal.
+            user_id: ID of the owning user.
 
         Returns:
-            Dict with execution result including trade details or error.
+            Dict with execution result.
         """
-        signal = self.signal_engine.get_signal(signal_id)
+        signal = self.signal_engine.get_signal(signal_id, user_id)
         if not signal:
             return {"status": "error", "message": f"Signal {signal_id} not found"}
 
-        # Build order
-        shares = self._estimate_shares(signal)
+        shares = self._estimate_shares(signal, user_id)
         order = Order(
             signal_id=signal_id,
             symbol=signal.symbol,
@@ -235,7 +194,7 @@ class MoneyMovesCore:
             return {"status": "error", "message": str(exc)}
 
         if result.filled_price is not None:
-            self.signal_engine.mark_executed(signal_id)
+            self.signal_engine.mark_executed(signal_id, user_id)
             _audit(
                 self.db,
                 "signal_executed",
@@ -252,35 +211,35 @@ class MoneyMovesCore:
             "message": result.message,
         }
 
-    def get_system_status(self) -> dict[str, Any]:
-        """Return full system health status.
+    def get_system_status(self, user_id: int) -> dict[str, Any]:
+        """Return full system health status for a user.
+
+        Args:
+            user_id: ID of the owning user.
 
         Returns:
-            Dict with DB status, broker status, kill switch state,
-            pending signals count, portfolio value, and exposure.
+            Dict with DB status, broker status, kill switch state, etc.
         """
-        # DB status
         try:
             self.db.fetchone("SELECT 1")
             db_ok = True
         except Exception:
             db_ok = False
 
-        # Kill switch
-        kill_active = self.risk_manager.is_kill_switch_active()
+        kill_active = self.risk_manager.is_kill_switch_active(user_id)
 
-        # Pending signals
         pending = self.db.fetchone(
-            "SELECT COUNT(*) as cnt FROM signals WHERE status = ?",
-            (SignalStatus.PENDING,),
+            "SELECT COUNT(*) as cnt FROM signals WHERE status = ? AND user_id = ?",
+            (SignalStatus.PENDING, user_id),
         )
         pending_count = pending["cnt"] if pending else 0
 
-        # Portfolio value
-        pv = self.db.fetchone("SELECT * FROM portfolio_value ORDER BY date DESC LIMIT 1")
+        pv = self.db.fetchone(
+            "SELECT * FROM portfolio_value WHERE user_id = ? ORDER BY date DESC LIMIT 1",
+            (user_id,),
+        )
 
-        # Exposure
-        exposure = self.risk_manager.calculate_exposure()
+        exposure = self.risk_manager.calculate_exposure(user_id)
 
         return {
             "db_connected": db_ok,
@@ -292,11 +251,12 @@ class MoneyMovesCore:
             "mode": self.settings.get("mode", "mock"),
         }
 
-    def _estimate_shares(self, signal: Signal) -> float:
-        """Estimate number of shares for an order based on signal size_pct.
+    def _estimate_shares(self, signal: Signal, user_id: int) -> float:
+        """Estimate number of shares for an order.
 
         Args:
             signal: Signal with optional size_pct.
+            user_id: ID of the owning user.
 
         Returns:
             Estimated share count (minimum 1).
@@ -304,7 +264,7 @@ class MoneyMovesCore:
         if not signal.size_pct:
             return 1.0
 
-        nav = self.risk_manager._get_nav()
+        nav = self.risk_manager._get_nav(user_id)
         if nav <= 0:
             return 1.0
 
