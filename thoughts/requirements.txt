@@ -1,0 +1,7 @@
+yfinance>=0.2
+finnhub-python>=2.4
+requests>=2.31
+pytest>=8.0
+ruff>=0.4
+pyyaml>=6.0
+python-frontmatter>=1.1
