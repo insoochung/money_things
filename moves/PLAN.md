@@ -108,6 +108,11 @@ See [spec/money_moves.md](spec/money_moves.md) for full specification.
 
 ### 2.1 FastAPI Backend
 - [ ] api/app.py: FastAPI app with CORS, lifespan hooks (start/stop engine)
+- [ ] Google OAuth authentication: allowlist-only (Insoo + optional family members)
+  - Login via Google, verify email against allowlist in config
+  - Session cookie / JWT for subsequent requests
+  - All API routes and WebSocket protected
+  - Config: `ALLOWED_EMAILS=["insoo@...", ...]` in .env
 - [ ] All REST endpoints from spec
 - [ ] WebSocket endpoint: /ws/prices
 - [ ] Serve dashboard static files + Jinja2 template
