@@ -346,14 +346,14 @@ class PrinciplesEngine:
             SELECT t.id, t.symbol, t.realized_pnl, t.signal_id
             FROM trades t
             WHERE t.realized_pnl IS NOT NULL
-              AND t.executed_at >= date(?, '-' || ? || ' days')
+              AND t.timestamp >= date(?, '-' || ? || ' days')
               AND t.id NOT IN (
                   SELECT CAST(json_extract(details, '$.trade_id') AS INTEGER)
                   FROM audit_log
                   WHERE action IN ('principle_validated', 'principle_invalidated')
                     AND json_extract(details, '$.trade_id') IS NOT NULL
               )
-            ORDER BY t.executed_at
+            ORDER BY t.timestamp
             """,
             (cutoff, lookback_days),
         )
