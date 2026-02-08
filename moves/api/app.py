@@ -35,11 +35,10 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 from api.auth import AuthMiddleware, create_auth_router
 from api.deps import EngineContainer, clear_engines, set_engines
@@ -192,35 +191,23 @@ def create_app() -> FastAPI:
     # WebSocket for real-time prices
     app.include_router(create_websocket_router())
 
-    # Static files and templates (will be created in Phase 2.2)
-    dashboard_static = Path(__file__).parent.parent / "dashboard" / "static"
-    dashboard_templates = Path(__file__).parent.parent / "dashboard" / "templates"
+    # Dashboard static files (CSS, JS served from /dashboard/)
+    dashboard_dir = Path(__file__).parent.parent / "dashboard"
 
-    if dashboard_static.exists():
-        app.mount("/static", StaticFiles(directory=str(dashboard_static)), name="static")
-
-    if dashboard_templates.exists():
-        templates = Jinja2Templates(directory=str(dashboard_templates))
+    if dashboard_dir.exists() and (dashboard_dir / "index.html").exists():
+        app.mount("/dashboard", StaticFiles(directory=str(dashboard_dir)), name="dashboard")
 
         @app.get("/", response_class=HTMLResponse)
-        async def dashboard(request: Request) -> HTMLResponse:
-            """Serve the main dashboard HTML page.
+        async def dashboard() -> HTMLResponse:
+            """Redirect root to the dashboard index page.
 
-            Returns the single-page dashboard application with Jinja2 template
-            rendering. The dashboard is a vanilla JS application that consumes
-            the REST API and WebSocket endpoints.
-
-            Args:
-                request: FastAPI request object for template context.
+            Serves the dashboard index.html which loads CSS/JS from /dashboard/.
 
             Returns:
-                HTML response with the rendered dashboard template.
+                HTML response with the dashboard page.
             """
-            settings = get_settings()
-            return templates.TemplateResponse(
-                "index.html",
-                {"request": request, "mode": settings.mode, "title": "Money Moves Dashboard"},
-            )
+            return HTMLResponse((dashboard_dir / "index.html").read_text())
+
     else:
         # Placeholder response when dashboard files don't exist
         @app.get("/", response_class=HTMLResponse)
