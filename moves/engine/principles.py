@@ -321,6 +321,194 @@ class PrinciplesEngine:
         self.db.connect().commit()
         return adjustment
 
+    def check_trade_outcomes(self, lookback_days: int = 90) -> list[dict]:
+        """Evaluate trade outcomes and validate/invalidate principles used.
+
+        Examines closed trades from the past N days, determines if each trade
+        was profitable, and updates the principles that were active when the
+        signal was generated. This is the core active learning loop.
+
+        Args:
+            lookback_days: Number of days to look back for completed trades.
+                Default 90 covers the 30/60/90 day outcome windows.
+
+        Returns:
+            List of dicts with keys: trade_id, symbol, pnl, principle_id, action
+            (where action is 'validated' or 'invalidated').
+
+        Side effects:
+            - Calls validate_principle or invalidate_principle for each relevant principle.
+            - May deactivate principles that cross the poor-performance threshold.
+        """
+        cutoff = datetime.now(UTC).isoformat()[:10]
+        trades = self.db.fetchall(
+            """
+            SELECT t.id, t.symbol, t.realized_pnl, t.signal_id
+            FROM trades t
+            WHERE t.realized_pnl IS NOT NULL
+              AND t.executed_at >= date(?, '-' || ? || ' days')
+              AND t.id NOT IN (
+                  SELECT CAST(json_extract(details, '$.trade_id') AS INTEGER)
+                  FROM audit_log
+                  WHERE action IN ('principle_validated', 'principle_invalidated')
+                    AND json_extract(details, '$.trade_id') IS NOT NULL
+              )
+            ORDER BY t.executed_at
+            """,
+            (cutoff, lookback_days),
+        )
+
+        results = []
+        active_principles = self.get_all(active_only=True)
+
+        for trade in trades:
+            pnl = trade.get("realized_pnl", 0) or 0
+            win = pnl > 0
+
+            for p in active_principles:
+                if win:
+                    self.validate_principle(p["id"])
+                    results.append(
+                        {
+                            "trade_id": trade["id"],
+                            "symbol": trade["symbol"],
+                            "pnl": pnl,
+                            "principle_id": p["id"],
+                            "action": "validated",
+                        }
+                    )
+                else:
+                    self.invalidate_principle(p["id"])
+                    self.deactivate_if_poor(p["id"])
+                    results.append(
+                        {
+                            "trade_id": trade["id"],
+                            "symbol": trade["symbol"],
+                            "pnl": pnl,
+                            "principle_id": p["id"],
+                            "action": "invalidated",
+                        }
+                    )
+
+        return results
+
+    def adjust_weights(self) -> list[dict]:
+        """Adjust principle weights based on their track record.
+
+        Increases weight for consistently validated principles and decreases
+        weight for those with more invalidations. Weight is bounded to [0.01, 0.20].
+
+        Returns:
+            List of dicts with keys: id, text, old_weight, new_weight.
+
+        Side effects:
+            - Updates the weight column for all active principles.
+            - Commits the database transaction.
+        """
+        principles = self.get_all(active_only=True)
+        adjustments = []
+
+        for p in principles:
+            total = p["validated_count"] + p["invalidated_count"]
+            if total < 3:
+                continue  # Not enough data to adjust
+
+            win_rate = p["validated_count"] / total
+            old_weight = p["weight"]
+
+            # Scale weight: 50% win rate → no change, higher → increase, lower → decrease
+            factor = 1.0 + (win_rate - 0.5) * 0.2  # ±10% per 50% deviation
+            new_weight = max(0.01, min(0.20, old_weight * factor))
+            new_weight = round(new_weight, 4)
+
+            if new_weight != old_weight:
+                self.db.execute(
+                    "UPDATE principles SET weight = ? WHERE id = ?",
+                    (new_weight, p["id"]),
+                )
+                adjustments.append(
+                    {
+                        "id": p["id"],
+                        "text": p["text"],
+                        "old_weight": old_weight,
+                        "new_weight": new_weight,
+                    }
+                )
+
+        if adjustments:
+            self.db.connect().commit()
+
+        return adjustments
+
+    def discover_patterns(self) -> list[dict]:
+        """Analyze trade outcomes for emerging patterns worth codifying.
+
+        Looks at win rates by source type, thesis strategy, and domain to find
+        patterns that might warrant new principles.
+
+        Returns:
+            List of dicts describing discovered patterns, each with keys:
+            pattern_type, description, win_rate, sample_size.
+        """
+        patterns = []
+
+        # Win rate by signal source
+        source_stats = self.db.fetchall(
+            """
+            SELECT s.source,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN t.realized_pnl > 0 THEN 1 ELSE 0 END) as wins
+            FROM trades t
+            JOIN signals s ON t.signal_id = s.id
+            WHERE t.realized_pnl IS NOT NULL
+            GROUP BY s.source
+            HAVING COUNT(*) >= 5
+            """
+        )
+
+        for row in source_stats:
+            win_rate = row["wins"] / row["total"] if row["total"] > 0 else 0
+            if win_rate > 0.7 or win_rate < 0.3:
+                patterns.append(
+                    {
+                        "pattern_type": "source_performance",
+                        "description": (
+                            f"Signal source '{row['source']}' has {win_rate:.0%} win rate"
+                        ),
+                        "win_rate": win_rate,
+                        "sample_size": row["total"],
+                    }
+                )
+
+        # Win rate by thesis strategy
+        strategy_stats = self.db.fetchall(
+            """
+            SELECT th.strategy,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN t.realized_pnl > 0 THEN 1 ELSE 0 END) as wins
+            FROM trades t
+            JOIN signals s ON t.signal_id = s.id
+            JOIN theses th ON s.thesis_id = th.id
+            WHERE t.realized_pnl IS NOT NULL
+            GROUP BY th.strategy
+            HAVING COUNT(*) >= 5
+            """
+        )
+
+        for row in strategy_stats:
+            win_rate = row["wins"] / row["total"] if row["total"] > 0 else 0
+            if win_rate > 0.7 or win_rate < 0.3:
+                patterns.append(
+                    {
+                        "pattern_type": "strategy_performance",
+                        "description": f"Strategy '{row['strategy']}' has {win_rate:.0%} win rate",
+                        "win_rate": win_rate,
+                        "sample_size": row["total"],
+                    }
+                )
+
+        return patterns
+
 
 def _audit(db: Database, action: str, entity_type: str, entity_id: int | None) -> None:
     """Create an audit log entry for a principles engine action.
