@@ -113,7 +113,7 @@
   // ── 3. Macro ──
   async function loadMacro() {
     try {
-      const d = await api('/api/fund/risk/macro-indicators');
+      const d = await api('/api/fund/macro-indicators');
       const indicators = d.indicators || d;
       const arr = Array.isArray(indicators) ? indicators : Object.entries(indicators).map(([k, v]) => ({ name: k, ...v }));
       if (!arr.length) { $('#macro-strip').innerHTML = emptyHTML('No macro data'); return; }
@@ -230,7 +230,7 @@
   // ── 7. Correlation ──
   async function loadCorrelation() {
     try {
-      const d = await api('/api/fund/risk/correlation');
+      const d = await api('/api/fund/correlation');
       const labels = d.labels || d.tickers || [];
       const matrix = d.matrix || d.correlations || [];
       if (!labels.length) { $('#correlation-map').innerHTML = emptyHTML('No correlation data'); return; }
@@ -258,7 +258,7 @@
   // ── 8. Treemap ──
   async function loadTreemap() {
     try {
-      const d = await api('/api/fund/risk/heatmap');
+      const d = await api('/api/fund/heatmap');
       const items = (d.positions || d || []).filter(p => p.market_value || p.value);
       if (!items.length) { $('#treemap').innerHTML = emptyHTML('No positions'); return; }
 
@@ -393,7 +393,7 @@
     try {
       const [perf, bench] = await Promise.all([
         api('/api/fund/performance'),
-        api('/api/fund/performance/benchmark'),
+        api('/api/fund/benchmark'),
       ]);
       state.perfData = perf;
       state.benchData = bench;
@@ -488,7 +488,7 @@
   // ── 11. Drawdown ──
   async function loadDrawdown() {
     try {
-      const d = await api('/api/fund/performance/drawdown');
+      const d = await api('/api/fund/drawdown');
       state.ddData = d;
       const metrics = $('#dd-metrics');
       metrics.innerHTML = [
@@ -561,7 +561,7 @@
   // ── 13. Congress ──
   async function loadCongress() {
     try {
-      const d = await api('/api/fund/intelligence/congress-trades');
+      const d = await api('/api/fund/congress-trades');
       const trades = Array.isArray(d) ? d : d.trades || [];
       if (!trades.length) { $('#congress-body').innerHTML = `<tr><td colspan="6">${emptyHTML('No congress trades')}</td></tr>`; return; }
       const myTickers = new Set(state.positions.map(p => p.ticker));
@@ -584,7 +584,7 @@
   // ── 14. Principles ──
   async function loadPrinciples() {
     try {
-      const d = await api('/api/fund/intelligence/principles');
+      const d = await api('/api/fund/principles');
       const arr = Array.isArray(d) ? d : d.principles || [];
       if (!arr.length) { $('#principles-list').innerHTML = emptyHTML('No principles defined'); return; }
       $('#principles-list').innerHTML = arr.map(p => {

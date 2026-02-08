@@ -195,7 +195,7 @@ def create_app() -> FastAPI:
     dashboard_dir = Path(__file__).parent.parent / "dashboard"
 
     if dashboard_dir.exists() and (dashboard_dir / "index.html").exists():
-        app.mount("/dashboard", StaticFiles(directory=str(dashboard_dir)), name="dashboard")
+        app.mount("/dashboard", StaticFiles(directory=str(dashboard_dir), html=True), name="dashboard")
 
         @app.get("/", response_class=HTMLResponse)
         async def dashboard() -> HTMLResponse:
