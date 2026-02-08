@@ -60,8 +60,8 @@ class TestApp:
             assert "mode" in data
             assert "version" in data
 
-    def test_dashboard_placeholder(self, seeded_db: Database) -> None:
-        """Test the dashboard placeholder when static files don't exist."""
+    def test_dashboard_serves_html(self, seeded_db: Database) -> None:
+        """Test the dashboard serves the index.html page."""
         import api.deps as deps
 
         deps._engines["container"] = MagicMock()
@@ -70,8 +70,7 @@ class TestApp:
 
         response = client.get("/")
         assert response.status_code == 200
-        assert "Money Moves Dashboard" in response.text
-        assert "FastAPI backend is running" in response.text
+        assert "Money Moves" in response.text
 
 
 class TestAuthentication:

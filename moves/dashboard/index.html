@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Money Moves</title>
+  <link rel="stylesheet" href="moves.css">
+</head>
+<body>
+<div class="container">
+
+  <!-- 0. Stale Banner -->
+  <div id="stale-banner" class="stale-banner"></div>
+
+  <!-- 1. Header -->
+  <header class="header">
+    <div class="header-left">
+      <h1>Money Moves</h1>
+      <span id="mode-badge" class="badge badge-mock">Mock</span>
+    </div>
+    <div class="header-right">
+      <span id="last-updated" class="last-updated"></span>
+      <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">☀️</button>
+    </div>
+  </header>
+
+  <!-- 2. Summary Cards -->
+  <section class="section" id="section-summary">
+    <div class="summary-grid" id="summary-grid">
+      <div class="card skeleton skeleton-card"></div>
+      <div class="card skeleton skeleton-card"></div>
+      <div class="card skeleton skeleton-card"></div>
+      <div class="card skeleton skeleton-card"></div>
+      <div class="card skeleton skeleton-card"></div>
+      <div class="card skeleton skeleton-card"></div>
+    </div>
+  </section>
+
+  <!-- 3. Macro Indicator Strip -->
+  <section class="section" id="section-macro">
+    <h2 class="section-title">Macro Indicators</h2>
+    <div class="macro-strip-wrapper">
+      <button class="scroll-arrow left" id="macro-left">‹</button>
+      <div class="macro-strip" id="macro-strip">
+        <div class="skeleton skeleton-row" style="width:100px;height:50px"></div>
+      </div>
+      <button class="scroll-arrow right" id="macro-right">›</button>
+    </div>
+  </section>
+
+  <!-- 4. Risk Profile -->
+  <section class="section" id="section-risk">
+    <h2 class="section-title">Risk Profile</h2>
+    <div class="risk-grid" id="risk-grid">
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+    </div>
+  </section>
+
+  <!-- 5. Thesis Panel -->
+  <section class="section" id="section-theses">
+    <h2 class="section-title">Investment Theses</h2>
+    <div class="thesis-list" id="thesis-list">
+      <div class="skeleton skeleton-card"></div>
+    </div>
+  </section>
+
+  <!-- 6. Exposure -->
+  <section class="section" id="section-exposure">
+    <h2 class="section-title">Exposure</h2>
+    <div class="exposure-bar-container" id="exposure-bar-container">
+      <div class="skeleton skeleton-row" style="height:28px"></div>
+    </div>
+    <div class="exposure-labels" id="exposure-labels"></div>
+    <div class="gauge-container" id="gauge-container">
+      <svg id="exposure-gauge" width="220" height="130" viewBox="0 0 220 130"></svg>
+    </div>
+  </section>
+
+  <!-- 7. Correlation Heatmap -->
+  <section class="section" id="section-correlation">
+    <h2 class="section-title">Thesis Correlation</h2>
+    <div id="correlation-map" class="skeleton skeleton-chart"></div>
+  </section>
+
+  <!-- 8. Position Heatmap (Treemap) -->
+  <section class="section" id="section-treemap">
+    <h2 class="section-title">Position Heatmap</h2>
+    <div class="treemap-container" id="treemap"></div>
+  </section>
+
+  <!-- 9. Positions Table -->
+  <section class="section" id="section-positions">
+    <h2 class="section-title">Positions</h2>
+    <div class="table-wrapper">
+      <table id="positions-table">
+        <thead>
+          <tr>
+            <th data-col="ticker">Ticker <span class="sort-arrow"></span></th>
+            <th data-col="side">Side</th>
+            <th data-col="shares">Shares</th>
+            <th data-col="entry">Entry</th>
+            <th data-col="current">Current</th>
+            <th data-col="value" class="hide-tablet">Value</th>
+            <th data-col="pnl">P/L $</th>
+            <th data-col="pnl_pct">P/L %</th>
+            <th data-col="range" class="hide-tablet">Target/Stop</th>
+            <th data-col="review" class="hide-tablet">Review</th>
+          </tr>
+        </thead>
+        <tbody id="positions-body">
+          <tr><td colspan="10"><div class="skeleton skeleton-row"></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 10. Performance Chart -->
+  <section class="section" id="section-performance">
+    <h2 class="section-title">Performance</h2>
+    <div class="chart-controls" id="perf-controls">
+      <button class="chart-btn active" data-range="1M">1M</button>
+      <button class="chart-btn" data-range="3M">3M</button>
+      <button class="chart-btn" data-range="6M">6M</button>
+      <button class="chart-btn" data-range="1Y">1Y</button>
+      <button class="chart-btn" data-range="ALL">ALL</button>
+      <label class="chart-check"><input type="checkbox" id="bench-spy"> SPY</label>
+      <label class="chart-check"><input type="checkbox" id="bench-qqq"> QQQ</label>
+      <label class="chart-check"><input type="checkbox" id="bench-iwm"> IWM</label>
+    </div>
+    <div class="chart-canvas-wrapper">
+      <canvas id="perf-canvas" height="280"></canvas>
+    </div>
+    <div class="chart-badges" id="perf-badges"></div>
+  </section>
+
+  <!-- 11. Drawdown Analysis -->
+  <section class="section" id="section-drawdown">
+    <h2 class="section-title">Drawdown Analysis</h2>
+    <div class="dd-metrics" id="dd-metrics">
+      <div class="skeleton skeleton-row" style="width:200px"></div>
+    </div>
+    <div class="chart-canvas-wrapper">
+      <canvas id="dd-canvas" height="180"></canvas>
+    </div>
+  </section>
+
+  <!-- 12. Trades History -->
+  <section class="section" id="section-trades">
+    <h2 class="section-title">Recent Trades</h2>
+    <div class="table-wrapper">
+      <table id="trades-table">
+        <thead>
+          <tr>
+            <th>Action</th>
+            <th>Ticker</th>
+            <th>Shares</th>
+            <th>Price</th>
+            <th class="hide-tablet">Total</th>
+            <th>Realized P/L</th>
+          </tr>
+        </thead>
+        <tbody id="trades-body">
+          <tr><td colspan="6"><div class="skeleton skeleton-row"></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 13. Congress Trades -->
+  <section class="section" id="section-congress">
+    <h2 class="section-title">Congress Trades</h2>
+    <div class="table-wrapper">
+      <table id="congress-table">
+        <thead>
+          <tr>
+            <th>Member</th>
+            <th>Ticker</th>
+            <th>Action</th>
+            <th class="hide-tablet">Amount</th>
+            <th>Date</th>
+            <th>Overlap</th>
+          </tr>
+        </thead>
+        <tbody id="congress-body">
+          <tr><td colspan="6"><div class="skeleton skeleton-row"></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 14. Principles Engine -->
+  <section class="section" id="section-principles">
+    <h2 class="section-title">Principles Engine</h2>
+    <div id="principles-list">
+      <div class="skeleton skeleton-card"></div>
+    </div>
+  </section>
+
+  <!-- 15. Footer -->
+  <footer class="footer">
+    <span id="footer-mode"></span>
+    <span id="footer-updated"></span>
+  </footer>
+
+</div>
+<script src="moves.js"></script>
+</body>
+</html>
