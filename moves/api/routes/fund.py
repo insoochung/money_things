@@ -484,9 +484,10 @@ async def get_exposure(engines: Any = Depends(get_engines)) -> ExposureBreakdown
                     by_thesis[thesis_title] = 0.0
                 by_thesis[thesis_title] += market_value
 
-                # TODO: Add sector classification
-                # For now, use a placeholder sector mapping
-                sector = "Technology"  # Placeholder
+                # Use sector mapping from discovery module
+                from engine.discovery import get_sector
+
+                sector = get_sector(position["symbol"])
                 if sector not in by_sector:
                     by_sector[sector] = 0.0
                 by_sector[sector] += market_value
