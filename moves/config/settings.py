@@ -135,7 +135,11 @@ class Settings(BaseSettings):
     domain_boost: float = 1.15
     out_of_domain_penalty: float = 0.90
 
-    # Google OAuth Authentication
+    # Authentication
+    auth_mode: str = "password"  # "password" or "google"
+    auth_password: str = ""  # For password mode
+
+    # Google OAuth (for auth_mode=google)
     google_client_id: str = ""
     google_client_secret: str = ""
     google_redirect_uri: str = ""

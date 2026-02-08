@@ -25,3 +25,4 @@ config/.env
 
 # Logs
 *.log
+config/.env

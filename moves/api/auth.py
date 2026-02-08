@@ -1,31 +1,18 @@
-"""Google OAuth authentication for the money_moves dashboard.
+"""Authentication for the money_moves dashboard.
 
-This module provides session-based authentication using Google OAuth2 for the
-money_moves web dashboard. Only users with email addresses in the ALLOWED_EMAILS
-environment variable can access the system.
+Supports two modes (controlled by MOVES_AUTH_MODE):
+    - "password" (default): Simple username/password login via a form.
+      Set MOVES_AUTH_PASSWORD in env. Username is ignored (single-user).
+    - "google": Google OAuth2 with email allowlist (requires domain + HTTPS).
 
-The authentication flow:
-1. User visits /auth/login and is redirected to Google OAuth consent screen
-2. Google redirects back to /auth/callback with an authorization code
-3. We exchange the code for tokens and retrieve the user's email
-4. If email is in the allowlist, we set a signed session cookie
-5. All subsequent requests validate the session cookie via middleware
-
-Session cookies are signed with a secret key and contain the user's email address.
-The cookies are httpOnly and secure (when not in development) to prevent XSS attacks.
-
-All API routes and WebSocket endpoints are protected except:
-- /auth/* (login, callback, logout)
-- /health (health check)
+Session cookies are signed with itsdangerous and are httpOnly.
 
 Functions:
     create_auth_router: Creates the FastAPI router with auth endpoints.
     get_current_user: Dependency to extract current user from session.
-    auth_middleware: Middleware to protect all routes except allowlisted ones.
 
-Dependencies:
-    - authlib: OAuth client implementation
-    - itsdangerous: Cookie signing and verification
+Classes:
+    AuthMiddleware: Middleware to protect all routes except allowlisted ones.
 """
 
 from __future__ import annotations
@@ -33,9 +20,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, HTTPException, Request, Response, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -43,209 +29,263 @@ from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
+SESSION_MAX_AGE = 7 * 24 * 60 * 60  # 7 days in seconds
+
+_LOGIN_HTML = """<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Money Moves — Login</title>
+<style>
+  body{font-family:Inter,-apple-system,sans-serif;background:#f7f7f5;
+       display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0}
+  .box{background:#fff;border:1px solid #e8e8e4;border-radius:3px;padding:2.5rem;
+       width:320px;text-align:center}
+  h1{font-size:1.3rem;font-weight:700;color:#37352f;margin:0 0 .25rem}
+  .sub{font-size:.8rem;color:#9b9a97;margin-bottom:1.5rem}
+  input{width:100%;padding:.6rem .75rem;border:1px solid #e8e8e4;border-radius:3px;
+        font-family:inherit;font-size:.85rem;box-sizing:border-box;margin-bottom:.75rem}
+  input:focus{outline:none;border-color:#37352f}
+  button{width:100%;padding:.6rem;background:#37352f;color:#fff;border:none;
+         border-radius:3px;font-family:inherit;font-size:.85rem;cursor:pointer}
+  button:hover{background:#2f2d28}
+  .err{color:#e03e3e;font-size:.8rem;margin-bottom:.75rem}
+</style>
+</head>
+<body>
+<form class="box" method="POST" action="/auth/login">
+  <h1>Money Moves</h1>
+  <p class="sub">Enter password to continue</p>
+  {error}
+  <input type="password" name="password" placeholder="Password" autofocus required>
+  <button type="submit">Sign In</button>
+</form>
+</body></html>"""
+
 
 def create_auth_router() -> APIRouter:
-    """Create the FastAPI router with Google OAuth authentication endpoints.
+    """Create the auth router with login/logout endpoints.
 
-    Creates an OAuth client configured with Google's endpoints and registers
-    three routes: login, callback, and logout.
+    Supports password mode (default) and Google OAuth mode based on
+    the MOVES_AUTH_MODE setting.
 
     Returns:
-        FastAPI router with /auth/login, /auth/callback, and /auth/logout endpoints.
+        FastAPI router with /auth/* endpoints.
     """
     settings = get_settings()
     router = APIRouter(prefix="/auth", tags=["authentication"])
 
-    # Initialize OAuth client
-    oauth = OAuth()
-    oauth.register(
-        name="google",
-        client_id=settings.google_client_id,
-        client_secret=settings.google_client_secret,
-        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-        client_kwargs={
-            "scope": "openid email profile",
-        },
-    )
+    serializer = URLSafeTimedSerializer(settings.session_secret_key or "dev-secret-change-me")
 
-    # Cookie serializer for session management
-    serializer = URLSafeTimedSerializer(settings.session_secret_key)
-
-    @router.get("/login")
-    async def login(request: Request) -> RedirectResponse:
-        """Initiate Google OAuth login flow.
-
-        Redirects the user to Google's OAuth consent screen. After the user
-        grants permission, Google will redirect back to /auth/callback.
-
-        Args:
-            request: FastAPI request object containing the OAuth client.
-
-        Returns:
-            Redirect response to Google OAuth consent screen.
-        """
-        redirect_uri = settings.google_redirect_uri
-        return await oauth.google.authorize_redirect(request, redirect_uri)
-
-    @router.get("/callback")
-    async def callback(request: Request) -> RedirectResponse:
-        """Handle Google OAuth callback and set session cookie.
-
-        Exchanges the authorization code for access tokens, retrieves the user's
-        email address, and verifies it against the allowlist. If authorized,
-        sets a signed session cookie and redirects to the dashboard.
-
-        Args:
-            request: FastAPI request object containing the authorization code.
-
-        Returns:
-            Redirect response to dashboard (success) or login page (error).
-
-        Raises:
-            HTTPException: If the user's email is not in the allowlist.
-        """
-        settings = get_settings()
-
-        try:
-            # Exchange authorization code for tokens
-            token = await oauth.google.authorize_access_token(request)
-
-            # Get user info from Google
-            user = await oauth.google.parse_id_token(request, token)
-            email = user.get("email")
-
-            if not email:
-                logger.warning("No email found in Google token")
-                return RedirectResponse("/auth/login", status_code=303)
-
-            # Check if email is in allowlist
-            if email not in settings.allowed_emails:
-                logger.warning("Unauthorized email attempted login: %s", email)
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN, detail=f"Email {email} not authorized"
-                )
-
-            # Create session cookie
-            session_data = serializer.dumps({"email": email})
-
-            response = RedirectResponse("/", status_code=303)
-            response.set_cookie(
-                key="session",
-                value=session_data,
-                httponly=True,
-                secure=True,  # Only over HTTPS in production
-                samesite="lax",
-                max_age=7 * 24 * 60 * 60,  # 7 days
-            )
-
-            logger.info("Successful login for %s", email)
-            return response
-
-        except Exception as e:
-            logger.error("OAuth callback error: %s", e)
-            return RedirectResponse("/auth/login", status_code=303)
+    if settings.auth_mode == "google":
+        _register_google_routes(router, serializer, settings)
+    else:
+        _register_password_routes(router, serializer, settings)
 
     @router.post("/logout")
     async def logout() -> Response:
-        """Clear session cookie and log out user.
-
-        Removes the session cookie by setting it to expire immediately.
-
-        Returns:
-            Response with cleared session cookie.
-        """
-        response = Response(status_code=200)
+        """Clear session cookie."""
+        response = RedirectResponse("/auth/login", status_code=303)
         response.delete_cookie("session")
         return response
 
     return router
 
 
-def get_current_user(request: Request) -> str:
-    """Extract current user email from session cookie.
-
-    Dependency function that validates and deserializes the session cookie
-    to extract the user's email address. Used to protect endpoints that
-    require authentication.
+def _register_password_routes(
+    router: APIRouter,
+    serializer: URLSafeTimedSerializer,
+    settings: Any,
+) -> None:
+    """Register simple password-based login routes.
 
     Args:
-        request: FastAPI request object containing the session cookie.
+        router: The auth router to add routes to.
+        serializer: Cookie serializer for session management.
+        settings: Application settings with auth_password.
+    """
+
+    @router.get("/login", response_class=HTMLResponse)
+    async def login_page() -> HTMLResponse:
+        """Serve the login form."""
+        return HTMLResponse(_LOGIN_HTML.replace("{error}", ""))
+
+    @router.post("/login")
+    async def login_submit(request: Request) -> Response:
+        """Validate password and set session cookie.
+
+        Args:
+            request: Form data with 'password' field.
+
+        Returns:
+            Redirect to dashboard on success, back to login on failure.
+        """
+        form = await request.form()
+        password = form.get("password", "")
+
+        expected = settings.auth_password
+        if not expected:
+            logger.error("MOVES_AUTH_PASSWORD not set — login disabled")
+            return HTMLResponse(
+                _LOGIN_HTML.replace(
+                    "{error}", '<p class="err">Server misconfigured — no password set</p>'
+                ),
+                status_code=500,
+            )
+
+        if password != expected:
+            client_host = request.client.host if request.client else "unknown"
+            logger.warning("Failed login attempt from %s", client_host)
+            return HTMLResponse(
+                _LOGIN_HTML.replace("{error}", '<p class="err">Wrong password</p>'),
+                status_code=401,
+            )
+
+        # Set session cookie
+        session_data = serializer.dumps({"user": "owner"})
+        response = RedirectResponse("/", status_code=303)
+        response.set_cookie(
+            key="session",
+            value=session_data,
+            httponly=True,
+            secure=request.url.scheme == "https",
+            samesite="lax",
+            max_age=SESSION_MAX_AGE,
+        )
+        logger.info("Successful password login")
+        return response
+
+
+def _register_google_routes(
+    router: APIRouter,
+    serializer: URLSafeTimedSerializer,
+    settings: Any,
+) -> None:
+    """Register Google OAuth login routes.
+
+    Args:
+        router: The auth router to add routes to.
+        serializer: Cookie serializer for session management.
+        settings: Application settings with Google OAuth config.
+    """
+    from authlib.integrations.starlette_client import OAuth
+
+    oauth = OAuth()
+    oauth.register(
+        name="google",
+        client_id=settings.google_client_id,
+        client_secret=settings.google_client_secret,
+        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid email profile"},
+    )
+
+    @router.get("/login")
+    async def login(request: Request) -> RedirectResponse:
+        """Redirect to Google OAuth consent screen."""
+        return await oauth.google.authorize_redirect(request, settings.google_redirect_uri)
+
+    @router.get("/callback")
+    async def callback(request: Request) -> RedirectResponse:
+        """Handle Google OAuth callback."""
+        settings_now = get_settings()
+        try:
+            token = await oauth.google.authorize_access_token(request)
+            user = await oauth.google.parse_id_token(request, token)
+            email = user.get("email")
+
+            if not email:
+                return RedirectResponse("/auth/login", status_code=303)
+
+            if email not in settings_now.allowed_emails:
+                logger.warning("Unauthorized email: %s", email)
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+            session_data = serializer.dumps({"email": email})
+            response = RedirectResponse("/", status_code=303)
+            response.set_cookie(
+                key="session",
+                value=session_data,
+                httponly=True,
+                secure=request.url.scheme == "https",
+                samesite="lax",
+                max_age=SESSION_MAX_AGE,
+            )
+            logger.info("Google OAuth login: %s", email)
+            return response
+        except Exception as e:
+            logger.error("OAuth callback error: %s", e)
+            return RedirectResponse("/auth/login", status_code=303)
+
+
+def get_current_user(request: Request) -> str:
+    """Extract current user from session cookie.
+
+    Args:
+        request: Request with session cookie.
 
     Returns:
-        The authenticated user's email address.
+        User identifier (email for Google mode, 'owner' for password mode).
 
     Raises:
-        HTTPException: If no valid session cookie is found or it has expired.
+        HTTPException: If no valid session cookie is found.
     """
     settings = get_settings()
-    serializer = URLSafeTimedSerializer(settings.session_secret_key)
+    serializer = URLSafeTimedSerializer(settings.session_secret_key or "dev-secret-change-me")
 
     session_cookie = request.cookies.get("session")
     if not session_cookie:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="No session cookie found"
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No session")
 
     try:
-        # Deserialize and validate cookie (max age: 7 days)
-        session_data = serializer.loads(session_cookie, max_age=7 * 24 * 60 * 60)
-        return session_data["email"]
+        data = serializer.loads(session_cookie, max_age=SESSION_MAX_AGE)
+        return data.get("email") or data.get("user", "unknown")
     except (BadSignature, SignatureExpired, KeyError):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired session"
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """Middleware to protect all routes except authentication and health endpoints.
-
-    Validates session cookies on all requests except for:
-    - /auth/* (authentication flow)
-    - /health (health check)
-    - Static files
-
-    If no valid session is found, returns 401 Unauthorized.
-    """
+    """Protect all routes except /auth/*, /health, /dashboard/*."""
 
     def __init__(self, app: Any) -> None:
-        """Initialize the auth middleware.
-
-        Args:
-            app: The ASGI application to wrap.
-        """
         super().__init__(app)
         settings = get_settings()
-        self.serializer = URLSafeTimedSerializer(settings.session_secret_key)
+        self.serializer = URLSafeTimedSerializer(
+            settings.session_secret_key or "dev-secret-change-me"
+        )
 
     async def dispatch(self, request: Request, call_next: Any) -> Response:
-        """Process request and validate session if required.
+        """Validate session or redirect to login.
 
         Args:
-            request: The incoming HTTP request.
-            call_next: The next middleware or route handler.
+            request: Incoming request.
+            call_next: Next handler.
 
         Returns:
-            The response from the next handler, or 401 if authentication fails.
+            Response from next handler, or redirect to /auth/login.
         """
         path = request.url.path
 
-        # Skip authentication for allowlisted paths
-        if path.startswith("/auth/") or path == "/health" or path.startswith("/static/"):
+        # Allowlisted paths
+        if path.startswith("/auth/") or path == "/health" or path.startswith("/dashboard/"):
             return await call_next(request)
 
-        # Skip authentication in testing mode
+        # Testing bypass
         settings = get_settings()
         if settings.testing:
             return await call_next(request)
 
-        # Validate session for all other paths
+        # Validate session
         session_cookie = request.cookies.get("session")
         if not session_cookie:
-            return Response("Authentication required", status_code=401)
+            # API calls get 401, browser gets redirect
+            if path.startswith("/api/") or path.startswith("/ws"):
+                return Response("Authentication required", status_code=401)
+            return RedirectResponse("/auth/login", status_code=303)
 
         try:
-            # Validate session cookie
-            self.serializer.loads(session_cookie, max_age=7 * 24 * 60 * 60)
+            self.serializer.loads(session_cookie, max_age=SESSION_MAX_AGE)
             return await call_next(request)
         except (BadSignature, SignatureExpired):
-            return Response("Session expired", status_code=401)
+            if path.startswith("/api/") or path.startswith("/ws"):
+                return Response("Session expired", status_code=401)
+            return RedirectResponse("/auth/login", status_code=303)

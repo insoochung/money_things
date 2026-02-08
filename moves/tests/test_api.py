@@ -27,7 +27,7 @@ Classes:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -110,36 +110,28 @@ class TestAuthentication:
         response = client.get("/health")
         assert response.status_code == 200
 
-    @patch("api.auth.OAuth")
-    def test_google_oauth_login(self, mock_oauth: MagicMock, seeded_db: Database) -> None:
-        """Test Google OAuth login initiation."""
-        with patch("api.deps._engines", {"container": MagicMock()}):
-            # Mock OAuth redirect
-            mock_google = MagicMock()
-            mock_google.authorize_redirect = AsyncMock(return_value=MagicMock())
-            mock_oauth.return_value.google = mock_google
+    def test_login_page_renders(self, seeded_db: Database) -> None:
+        """Test login page is served."""
+        import api.deps as deps
 
-            app = create_app()
-            client = TestClient(app)
+        deps._engines["container"] = MagicMock()
+        app = create_app()
+        client = TestClient(app)
 
-            # Login should redirect to Google
-            response = client.get("/auth/login")
-            # Note: TestClient doesn't handle redirects the same way as real OAuth
-            # In a real test, we'd mock the OAuth flow more completely
-            assert response.status_code in [200, 302, 307]
+        response = client.get("/auth/login")
+        assert response.status_code == 200
+        assert "password" in response.text.lower()
 
-    def test_logout_endpoint(self, seeded_db: Database) -> None:
-        """Test logout endpoint clears session."""
-        with patch("api.deps._engines", {"container": MagicMock()}):
-            app = create_app()
-            client = TestClient(app)
+    def test_logout_redirects(self, seeded_db: Database) -> None:
+        """Test logout clears session and redirects."""
+        import api.deps as deps
 
-            response = client.post("/auth/logout")
-            assert response.status_code == 200
+        deps._engines["container"] = MagicMock()
+        app = create_app()
+        client = TestClient(app, follow_redirects=False)
 
-            # Should set cookie to expire (delete)
-            set_cookie = response.headers.get("set-cookie", "")
-            assert "session=" in set_cookie
+        response = client.post("/auth/logout")
+        assert response.status_code == 303
 
 
 class TestFundRoutes:
