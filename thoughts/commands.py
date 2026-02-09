@@ -1,6 +1,6 @@
 """Telegram command handlers for the thoughts module.
 
-Four commands: /think, /think result handling, /note, /journal.
+Five commands: /think, /think result handling, /note, /journal, /brief.
 Called from the moves bot's telegram handler.
 """
 
@@ -397,6 +397,193 @@ def cmd_journal() -> str:
         return "📓 No journal entries yet. Use /think to start."
 
     return "\n".join(sections)
+
+
+def cmd_brief() -> str:
+    """Daily briefing: live prices vs triggers, thesis status, upcoming earnings.
+
+    Fetches current prices for all thesis symbols and watchlist items,
+    checks proximity to triggers, and shows upcoming earnings.
+
+    Returns:
+        Formatted briefing for Telegram.
+    """
+    engine = _get_engine()
+
+    sections: list[str] = ["📊 **Daily Brief**\n"]
+
+    # Gather all symbols from theses + watchlist triggers
+    theses = engine.get_theses()
+    all_symbols: set[str] = set()
+    thesis_symbols: dict[int, list[str]] = {}
+
+    for t in theses:
+        syms = _parse_thesis_symbols(t)
+        thesis_symbols[t["id"]] = syms
+        all_symbols.update(syms)
+
+    # Get watchlist triggers from moves DB
+    triggers = engine._moves_query(
+        "SELECT * FROM watchlist_triggers WHERE active = 1 ORDER BY symbol"
+    )
+    for tr in triggers:
+        all_symbols.add(tr["symbol"].upper())
+
+    # Fetch live prices
+    prices: dict[str, float] = {}
+    if all_symbols:
+        prices = _fetch_prices(sorted(all_symbols))
+
+    # ── Thesis Summary with Live Prices ──
+    if theses:
+        sections.append("**Theses:**")
+        for t in theses:
+            conviction = t.get("conviction", 0) or 0
+            pct = int(conviction) if conviction > 1 else int(conviction * 100)
+            syms = thesis_symbols.get(t["id"], [])
+            sym_prices = []
+            for s in syms:
+                p = prices.get(s)
+                if p:
+                    sym_prices.append(f"{s} ${p:.2f}")
+                else:
+                    sym_prices.append(s)
+            sym_str = ", ".join(sym_prices) if sym_prices else "no symbols"
+            sections.append(f"  • {t['title']} ({pct}%) — {sym_str}")
+        sections.append("")
+
+    # ── Watchlist Triggers: Proximity ──
+    if triggers and prices:
+        sections.append("**Trigger Proximity:**")
+        # Group by symbol
+        by_symbol: dict[str, list[dict]] = {}
+        for tr in triggers:
+            sym = tr["symbol"].upper()
+            by_symbol.setdefault(sym, []).append(tr)
+
+        for sym in sorted(by_symbol):
+            current = prices.get(sym)
+            if not current:
+                continue
+            for tr in by_symbol[sym]:
+                target = tr["target_value"]
+                pct_away = ((target - current) / current) * 100
+                direction = "↑" if pct_away > 0 else "↓"
+                ttype = tr["trigger_type"].replace("_", " ")
+                alert = ""
+                if abs(pct_away) < 5:
+                    alert = " ⚠️ CLOSE"
+                elif abs(pct_away) < 10:
+                    alert = " 👀"
+                sections.append(
+                    f"  • {sym} {ttype}: ${target:.0f} "
+                    f"({direction}{abs(pct_away):.1f}% from ${current:.2f}){alert}"
+                )
+        sections.append("")
+
+    # ── Upcoming Earnings ──
+    try:
+        from datetime import date as date_type
+        from datetime import timedelta
+
+        import yfinance as yf
+
+        today = date_type.today()
+        week_out = today + timedelta(days=7)
+        earnings_items: list[str] = []
+        for sym in sorted(all_symbols):
+            try:
+                ticker = yf.Ticker(sym)
+                cal = ticker.calendar
+                if cal is not None and not (
+                    hasattr(cal, "empty") and cal.empty
+                ):
+                    # cal can be a dict or DataFrame
+                    if isinstance(cal, dict):
+                        ed = cal.get("Earnings Date")
+                        if isinstance(ed, list) and ed:
+                            ed = ed[0]
+                        if ed and hasattr(ed, "date"):
+                            ed = ed.date()
+                    else:
+                        # DataFrame
+                        if "Earnings Date" in cal.columns:
+                            ed = cal["Earnings Date"].iloc[0]
+                            if hasattr(ed, "date"):
+                                ed = ed.date()
+                        else:
+                            ed = None
+
+                    if ed and today <= ed <= week_out:
+                        days = (ed - today).days
+                        urgency = " ⏰" if days <= 2 else ""
+                        earnings_items.append(
+                            f"  • {sym}: {ed.isoformat()} "
+                            f"({days}d away){urgency}"
+                        )
+            except Exception:
+                continue
+
+        if earnings_items:
+            sections.append("**Earnings This Week:**")
+            sections.extend(earnings_items)
+            sections.append("")
+    except Exception:
+        pass
+
+    # ── Recent Notes (last 3) ──
+    thoughts = engine.list_thoughts(limit=3)
+    if thoughts:
+        sections.append("**Recent Notes:**")
+        for t in thoughts:
+            date = t.get("created_at", "")[:10]
+            content = t["content"][:60]
+            tag = f" [{t['linked_symbol']}]" if t.get("linked_symbol") else ""
+            sections.append(f"  • [{date}]{tag} {content}")
+        sections.append("")
+
+    # ── Pending Signals ──
+    pending = engine.get_signals(status="pending")
+    if pending:
+        sections.append(f"**Pending Signals:** {len(pending)}")
+        for sig in pending[:3]:
+            sections.append(
+                f"  • {sig.get('direction', '?')} {sig.get('symbol', '?')} "
+                f"— {sig.get('reasoning', 'no reason')[:60]}"
+            )
+        sections.append("")
+
+    if len(sections) == 1:
+        return "📊 Nothing to brief on yet. Add theses with /think."
+
+    return "\n".join(sections)
+
+
+def _fetch_prices(symbols: list[str]) -> dict[str, float]:
+    """Fetch current prices for a list of symbols using yfinance.
+
+    Args:
+        symbols: List of ticker symbols.
+
+    Returns:
+        Dict mapping symbol to current price.
+    """
+    prices: dict[str, float] = {}
+    try:
+        import yfinance as yf
+
+        for sym in symbols:
+            try:
+                ticker = yf.Ticker(sym)
+                info = ticker.fast_info
+                price = getattr(info, "last_price", None)
+                if price and price > 0:
+                    prices[sym] = float(price)
+            except Exception:
+                continue
+    except ImportError:
+        pass
+    return prices
 
 
 def _parse_thesis_symbols(thesis: dict[str, Any]) -> list[str]:

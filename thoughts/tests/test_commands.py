@@ -44,10 +44,26 @@ def _create_moves_db(path: Path) -> None:
             shares REAL, price REAL,
             timestamp TEXT DEFAULT (datetime('now'))
         );
+        CREATE TABLE watchlist_triggers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            thesis_id INTEGER REFERENCES theses(id),
+            symbol TEXT NOT NULL,
+            trigger_type TEXT NOT NULL,
+            condition TEXT NOT NULL,
+            target_value REAL NOT NULL,
+            notes TEXT,
+            active INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            triggered_at TEXT
+        );
         INSERT INTO theses (title, symbols, conviction)
             VALUES ('AI inference', '["AMD"]', 0.6);
         INSERT INTO theses (title, symbols, conviction)
             VALUES ('Cloud security', '["CRWD","ZS"]', 0.75);
+        INSERT INTO watchlist_triggers (thesis_id, symbol, trigger_type, condition, target_value)
+            VALUES (1, 'AMD', 'entry', 'price_below', 180.0);
+        INSERT INTO watchlist_triggers (thesis_id, symbol, trigger_type, condition, target_value)
+            VALUES (1, 'AMD', 'stop_loss', 'price_below', 120.0);
     """)
     conn.commit()
     conn.close()
@@ -242,3 +258,89 @@ class TestCmdThinkReject:
     def test_invalid_data(self) -> None:
         result = commands.cmd_think_reject("bad")
         assert "❌" in result
+
+
+class TestCmdBrief:
+    def test_brief_returns_string(self) -> None:
+        mock_prices = {"AMD": 165.0, "CRWD": 400.0, "ZS": 220.0}
+        with patch.object(commands, "_fetch_prices", return_value=mock_prices):
+            result = commands.cmd_brief()
+        assert isinstance(result, str)
+        assert "Daily Brief" in result
+
+    def test_brief_shows_theses(self) -> None:
+        mock_prices = {"AMD": 165.0, "CRWD": 400.0, "ZS": 220.0}
+        with patch.object(commands, "_fetch_prices", return_value=mock_prices):
+            result = commands.cmd_brief()
+        assert "AI inference" in result
+        assert "Cloud security" in result
+
+    def test_brief_shows_prices(self) -> None:
+        with patch.object(commands, "_fetch_prices", return_value={"AMD": 165.50}):
+            result = commands.cmd_brief()
+        assert "$165.50" in result
+
+    def test_brief_shows_trigger_proximity(self) -> None:
+        with patch.object(commands, "_fetch_prices", return_value={"AMD": 175.0}):
+            result = commands.cmd_brief()
+        assert "Trigger Proximity" in result
+        assert "entry" in result
+        # AMD at 175, entry trigger at 180 → ~2.9% away → should show CLOSE warning
+        assert "CLOSE" in result
+
+    def test_brief_shows_stop_loss_distance(self) -> None:
+        with patch.object(commands, "_fetch_prices", return_value={"AMD": 165.0}):
+            result = commands.cmd_brief()
+        # AMD at 165, stop loss at 120 → ~27% away → no alert
+        assert "stop loss" in result
+
+    def test_brief_empty_portfolio(self) -> None:
+        engine = commands._get_engine()
+        # Clear theses
+        with patch.object(engine, "get_theses", return_value=[]):
+            with patch.object(commands, "_fetch_prices", return_value={}):
+                result = commands.cmd_brief()
+        # Should still return something (triggers remain)
+        assert "Brief" in result or "Nothing" in result
+
+    def test_brief_with_pending_signals(self) -> None:
+        engine = commands._get_engine()
+        # Insert a pending signal
+        engine._moves_query(
+            "INSERT INTO signals (action, symbol, thesis_id, status, reasoning) "
+            "VALUES ('BUY', 'AMD', 1, 'pending', 'test signal')"
+        )
+        # Actually need to use execute for INSERT
+        import sqlite3
+        conn = sqlite3.connect(str(engine.moves_db))
+        conn.execute(
+            "INSERT INTO signals (action, symbol, thesis_id, status, reasoning) "
+            "VALUES ('BUY', 'AMD', 1, 'pending', 'test signal')"
+        )
+        conn.commit()
+        conn.close()
+
+        with patch.object(commands, "_fetch_prices", return_value={"AMD": 165.0}):
+            result = commands.cmd_brief()
+        assert "Pending Signals" in result
+
+    def test_brief_no_yfinance_earnings_graceful(self) -> None:
+        """Brief should work even if earnings fetch fails."""
+        with patch.object(commands, "_fetch_prices", return_value={"AMD": 165.0}):
+            with patch("yfinance.Ticker", side_effect=Exception("no network")):
+                result = commands.cmd_brief()
+        assert "Daily Brief" in result
+
+    def test_fetch_prices_mock(self) -> None:
+        """_fetch_prices handles failures gracefully."""
+        with patch("yfinance.Ticker") as mock_ticker:
+            mock_info = type("FastInfo", (), {"last_price": 150.0})()
+            mock_ticker.return_value.fast_info = mock_info
+            prices = commands._fetch_prices(["AMD"])
+        assert prices.get("AMD") == 150.0
+
+    def test_fetch_prices_failure(self) -> None:
+        """_fetch_prices returns empty on error."""
+        with patch("yfinance.Ticker", side_effect=Exception("fail")):
+            prices = commands._fetch_prices(["AMD"])
+        assert prices == {}
