@@ -118,12 +118,25 @@
   async function loadMacro() {
     try {
       const d = await api('/api/fund/macro-indicators');
-      const indicators = d.indicators || d;
-      const arr = Array.isArray(indicators) ? indicators : Object.entries(indicators).map(([k, v]) => ({ name: k, ...v }));
+      const macroMap = [
+        { name: 'VIX', key: 'vix', chgKey: 'vix_change_pct', prefix: '', suffix: '' },
+        { name: '10Y', key: 'ten_year_yield', chgKey: 'ten_year_change_bp', prefix: '', suffix: '%', chgSuffix: 'bp' },
+        { name: 'DXY', key: 'dxy', chgKey: 'dxy_change_pct', prefix: '', suffix: '' },
+        { name: 'Oil', key: 'oil_price', chgKey: 'oil_change_pct', prefix: '$', suffix: '' },
+        { name: 'Gold', key: 'gold_price', chgKey: 'gold_change_pct', prefix: '$', suffix: '' },
+        { name: 'BTC', key: 'btc_price', chgKey: 'btc_change_pct', prefix: '$', suffix: '' },
+        { name: 'SPY', key: 'spy_price', chgKey: 'spy_change_pct', prefix: '$', suffix: '' },
+        { name: 'QQQ', key: 'qqq_price', chgKey: 'qqq_change_pct', prefix: '$', suffix: '' },
+      ];
+      const arr = macroMap.filter(m => d[m.key] != null).map(m => ({
+        name: m.name, value: d[m.key], change: d[m.chgKey] || 0, prefix: m.prefix, chgSuffix: m.chgSuffix || '%'
+      }));
       if (!arr.length) { $('#macro-strip').innerHTML = emptyHTML('No macro data'); return; }
       $('#macro-strip').innerHTML = arr.map(m => {
-        const chg = m.change ?? m.change_1d ?? 0;
-        return `<div class="macro-item"><span class="macro-label">${m.name || m.label}</span><span class="macro-value">${fmt(m.value)}</span><span class="macro-change ${cls(chg)}">${chg >= 0 ? '+' : ''}${fmt(chg)}</span></div>`;
+        const chg = m.change;
+        const valStr = m.prefix + fmt(m.value);
+        const chgStr = (chg >= 0 ? '+' : '') + fmt(chg) + m.chgSuffix;
+        return `<div class="macro-item"><span class="macro-label">${m.name}</span><span class="macro-value">${valStr}</span><span class="macro-change ${cls(chg)}">${chgStr}</span></div>`;
       }).join('');
     } catch (e) {
       $('#macro-strip').innerHTML = errorHTML('Failed to load macro', loadMacro);
