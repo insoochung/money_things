@@ -62,7 +62,7 @@ Live at **https://munnythoughts.com** with Google OAuth.
 5. **Test suite hangs when run all-together**: Individual files pass (538 tests) but running `pytest tests/` hangs. Likely SQLite locking under concurrent access. Need `--forked` or DB isolation.
 
 ### P2 — Nice to Have
-6. **No `/think` result parsing**: When the sub-agent finishes, Munny needs to parse the JSON output and present it to the user with options to accept/reject conviction changes.
+6. ~~**No `/think` result parsing**~~: ✅ **DONE (2026-02-09)** — `commands.cmd_think_result()` parses sub-agent JSON, auto-applies research artifacts (journal entries, notes, ticker recs), formats Telegram summary, and returns inline button specs for approve/reject of conviction and thesis changes. `cmd_think_approve()` / `cmd_think_reject()` handle callbacks. 12 new tests. Commit `08771dd`.
 7. **Import more journal data**: Research files (META.md, QCOM.md etc.) have rich content that could be imported as research notes.
 8. **Congress scoring not wired into signal generator**: The `congress_scoring.py` module exists but the signal generator uses a basic `thesis_congress` table check, not the full scoring engine.
 
@@ -78,13 +78,13 @@ Live at **https://munnythoughts.com** with Google OAuth.
 | Module | Lines | Tests | Lint | Grade |
 |--------|-------|-------|------|-------|
 | moves/ | ~22K | 393 | ✅ | A- |
-| thoughts/ | ~11K | 145 | ✅ | B+ |
-| **Total** | **33K** | **538** | **✅** | **A-** |
+| thoughts/ | ~11K | 157 | ✅ | A- |
+| **Total** | **33K** | **550** | **✅** | **A-** |
 
-**Thoughts grade rationale (B+):** Core engine works, bridge works, commands work. But the sub-agent output parsing pipeline is incomplete — the "last mile" between research output and thesis DB mutation is manual.
+**Thoughts grade rationale (A-):** Core engine, bridge, commands, and feedback loop all work. Sub-agent output is parsed, auto-applied, and presented with approve/reject buttons. The full /think → research → parse → approve → DB update pipeline is functional.
 
 ---
 
 ## Recommendation
 
-**Next session priority**: Build the output parser (`thoughts/feedback.py`) that takes sub-agent JSON, presents it to user, and updates thesis on approval. This closes the loop and makes `/think` fully functional end-to-end.
+**Next session priority**: Fix test suite hanging (P1 #5) or wire congress scoring into signal generator (P2 #8). The core /think loop is now fully functional end-to-end.
