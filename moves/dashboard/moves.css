@@ -917,3 +917,49 @@ tr.overlap { background: rgba(47,128,237,.06); }
   max-height: 400px;
   opacity: 1;
 }
+
+/* ── Thesis & Watchlist Inline Editing ── */
+.thesis-edit-form {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.thesis-card.expanded .thesis-edit-form { display: flex; }
+.thesis-edit-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.thesis-edit-form input[type="text"],
+.thesis-edit-form input[type="number"],
+.thesis-edit-form textarea,
+.thesis-edit-form select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+.thesis-edit-form input[type="range"] { width: 100%; }
+.btn-save, .btn-add {
+  background: var(--blue, #2f80ed);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 16px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  align-self: flex-start;
+}
+.btn-save:hover, .btn-add:hover { opacity: 0.85; }
+.btn-save:disabled { opacity: 0.5; cursor: default; }
+.btn-add { margin-bottom: 12px; }
+.btn-sm { padding: 2px 8px; font-size: 0.8rem; cursor: pointer; }
+.btn-del { background: var(--red, #e03e3e); color: #fff; border: none; border-radius: 3px; }

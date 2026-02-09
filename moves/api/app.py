@@ -53,6 +53,7 @@ from api.routes import (
     theses,
     trades,
     users,
+    watchlist,
 )
 from api.websocket import create_websocket_router
 from broker.mock import MockBroker
@@ -324,7 +325,7 @@ def create_app() -> FastAPI:
         Configured FastAPI application ready to serve requests.
     """
     app = FastAPI(
-        title="Money Moves",
+        title="Munny Thoughts",
         description="Autonomous investment execution engine",
         version="2.1.0",
         lifespan=lifespan,
@@ -383,6 +384,7 @@ def create_app() -> FastAPI:
     app.include_router(tax.router, prefix="/api/fund", tags=["tax"])
     app.include_router(admin.router, prefix="/api/fund", tags=["admin"])
     app.include_router(users.router, prefix="/api/fund", tags=["users"])
+    app.include_router(watchlist.router, prefix="/api/fund", tags=["watchlist"])
 
     # WebSocket for real-time prices
     app.include_router(create_websocket_router())

@@ -172,34 +172,222 @@
     try {
       const d = await api('/api/fund/theses');
       const arr = Array.isArray(d) ? d : d.theses || [];
-      if (!arr.length) { $('#thesis-list').innerHTML = emptyHTML('No active theses'); return; }
       const statusBadge = s => {
-        const map = { strengthening: 'badge-green', confirmed: 'badge-blue', weakening: 'badge-yellow', invalidated: 'badge-red' };
+        const map = { strengthening: 'badge-green', confirmed: 'badge-blue', weakening: 'badge-yellow', invalidated: 'badge-red', active: 'badge-green', draft: 'badge-muted', monitoring: 'badge-blue', archived: 'badge-muted' };
         return `<span class="badge ${map[s] || 'badge-muted'}">${s || 'unknown'}</span>`;
       };
-      $('#thesis-list').innerHTML = arr.map(t =>
-        `<div class="thesis-card" onclick="this.classList.toggle('expanded')">
-          <div class="thesis-header">
-            <span class="thesis-title">${t.title || t.name}</span>
-            ${statusBadge(t.status)}
-            ${t.strategy ? `<span class="badge badge-muted">${t.strategy}</span>` : ''}
-            <span class="thesis-symbols">${(t.symbols || t.tickers || []).join(', ')}</span>
-          </div>
-          <div class="thesis-body">
-            <p>${t.thesis_text || t.description || ''}</p>
-            ${t.horizon ? `<p><strong>Horizon:</strong> ${t.horizon}</p>` : ''}
-            ${t.conviction != null ? `<p><strong>Conviction:</strong> ${Math.round(t.conviction * 100)}%</p>` : ''}
-            ${t.validation_criteria?.length ? `<p><strong>Validation:</strong> ${t.validation_criteria.join('; ')}</p>` : ''}
-            ${t.failure_criteria?.length ? `<p><strong>Failure:</strong> ${t.failure_criteria.join('; ')}</p>` : ''}
-            ${t.positions_count ? `<p><strong>Positions:</strong> ${t.positions_count} · Value: $${fmt(t.total_value)} · P&L: $${fmt(t.unrealized_pnl)}</p>` : ''}
-            ${t.signals_pending ? `<p><strong>Pending signals:</strong> ${t.signals_pending}</p>` : ''}
-          </div>
-        </div>`
-      ).join('');
+      let html = `<button class="btn-add" id="add-thesis-btn">+ New Thesis</button>`;
+      if (!arr.length) { html += emptyHTML('No active theses'); }
+      else {
+        html += arr.map(t => {
+          const syms = (t.symbols || t.tickers || []).join(', ');
+          const conv = t.conviction != null ? Math.round(t.conviction * 100) : 50;
+          return `<div class="thesis-card" data-id="${t.id}">
+            <div class="thesis-header" onclick="this.parentElement.classList.toggle('expanded')">
+              <span class="thesis-title">${t.title || t.name}</span>
+              ${statusBadge(t.status)}
+              ${t.strategy ? `<span class="badge badge-muted">${t.strategy}</span>` : ''}
+              <span class="thesis-symbols">${syms}</span>
+            </div>
+            <div class="thesis-body">
+              <p>${t.thesis_text || t.description || ''}</p>
+              ${t.horizon ? `<p><strong>Horizon:</strong> ${t.horizon}</p>` : ''}
+              ${t.conviction != null ? `<p><strong>Conviction:</strong> ${conv}%</p>` : ''}
+              ${t.positions_count ? `<p><strong>Positions:</strong> ${t.positions_count} · Value: $${fmt(t.total_value)} · P&L: $${fmt(t.unrealized_pnl)}</p>` : ''}
+              <div class="thesis-edit-form">
+                <label>Title<input type="text" class="te-title" value="${(t.title || '').replace(/"/g, '&quot;')}"></label>
+                <label>Description<textarea class="te-text" rows="3">${t.thesis_text || ''}</textarea></label>
+                <label>Conviction: <span class="te-conv-val">${conv}%</span><input type="range" class="te-conviction" min="0" max="100" value="${conv}"></label>
+                <label>Status<select class="te-status">
+                  ${['draft','active','monitoring','archived'].map(s => `<option value="${s}" ${s === t.status ? 'selected' : ''}>${s}</option>`).join('')}
+                </select></label>
+                <label>Symbols<input type="text" class="te-symbols" value="${syms}" placeholder="AAPL, MSFT"></label>
+                <button class="btn-save" onclick="saveThesis(${t.id}, this)">Save</button>
+              </div>
+            </div>
+          </div>`;
+        }).join('');
+      }
+      $('#thesis-list').innerHTML = html;
+
+      // Conviction slider live update
+      $$('.te-conviction').forEach(sl => {
+        sl.addEventListener('input', () => {
+          sl.previousElementSibling.textContent = sl.value + '%';
+        });
+      });
+
+      // Add thesis button
+      const addBtn = $('#add-thesis-btn');
+      if (addBtn) addBtn.addEventListener('click', showNewThesisForm);
     } catch (e) {
       $('#thesis-list').innerHTML = errorHTML('Failed to load theses', loadTheses);
     }
   }
+
+  function showNewThesisForm() {
+    const existing = $('#new-thesis-form');
+    if (existing) { existing.remove(); return; }
+    const form = document.createElement('div');
+    form.id = 'new-thesis-form';
+    form.className = 'thesis-card expanded';
+    form.innerHTML = `<div class="thesis-body" style="display:block">
+      <div class="thesis-edit-form" style="display:flex">
+        <label>Title<input type="text" class="te-title" placeholder="Thesis title"></label>
+        <label>Description<textarea class="te-text" rows="3" placeholder="Describe your thesis (min 10 chars)"></textarea></label>
+        <label>Strategy<select class="te-strategy"><option value="long">Long</option><option value="short">Short</option><option value="long_short">Long/Short</option></select></label>
+        <label>Conviction: <span class="te-conv-val">50%</span><input type="range" class="te-conviction" min="0" max="100" value="50"></label>
+        <label>Symbols<input type="text" class="te-symbols" placeholder="AAPL, MSFT"></label>
+        <button class="btn-save" onclick="createThesis(this)">Create</button>
+      </div>
+    </div>`;
+    $('#thesis-list').insertBefore(form, $('#add-thesis-btn').nextSibling);
+    form.querySelector('.te-conviction').addEventListener('input', function() {
+      this.previousElementSibling.textContent = this.value + '%';
+    });
+  }
+
+  window.saveThesis = async function(id, btn) {
+    const card = btn.closest('.thesis-card');
+    const data = {
+      title: card.querySelector('.te-title').value,
+      thesis_text: card.querySelector('.te-text').value,
+      conviction: parseInt(card.querySelector('.te-conviction').value) / 100,
+      status: card.querySelector('.te-status').value,
+      symbols: card.querySelector('.te-symbols').value.split(',').map(s => s.trim()).filter(Boolean),
+    };
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+    try {
+      const r = await fetch(`/api/fund/theses/${id}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+      if (!r.ok) throw new Error(`${r.status}`);
+      btn.textContent = '✓ Saved';
+      setTimeout(() => loadTheses(), 800);
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = 'Save';
+      alert('Failed to save: ' + e.message);
+    }
+  };
+
+  window.createThesis = async function(btn) {
+    const card = btn.closest('#new-thesis-form');
+    const title = card.querySelector('.te-title').value;
+    const text = card.querySelector('.te-text').value;
+    if (!title || text.length < 10) { alert('Title required, description min 10 chars'); return; }
+    const data = {
+      title,
+      thesis_text: text,
+      strategy: card.querySelector('.te-strategy').value,
+      conviction: parseInt(card.querySelector('.te-conviction').value) / 100,
+      symbols: card.querySelector('.te-symbols').value.split(',').map(s => s.trim()).filter(Boolean),
+    };
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/fund/theses', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+      if (!r.ok) throw new Error(`${r.status}`);
+      loadTheses();
+    } catch (e) {
+      btn.disabled = false;
+      alert('Failed to create: ' + e.message);
+    }
+  };
+
+  // ── 5b. Watchlist Triggers ──
+  async function loadWatchlist() {
+    try {
+      const d = await api('/api/fund/watchlist?active_only=false');
+      const arr = Array.isArray(d) ? d : [];
+      let html = `<button class="btn-add" id="add-trigger-btn">+ Add Trigger</button>`;
+      if (!arr.length) { html += emptyHTML('No watchlist triggers'); }
+      else {
+        html += `<div class="table-wrapper"><table class="data-table"><thead><tr>
+          <th>Symbol</th><th>Type</th><th>Condition</th><th>Target</th>
+          <th>Thesis</th><th>Active</th><th>Actions</th>
+        </tr></thead><tbody>`;
+        html += arr.map(t => {
+          const typeBadge = { entry: 'badge-green', exit: 'badge-red', stop_loss: 'badge-yellow', take_profit: 'badge-blue' };
+          return `<tr data-trigger-id="${t.id}">
+            <td><strong>${t.symbol}</strong></td>
+            <td><span class="badge ${typeBadge[t.trigger_type] || 'badge-muted'}">${t.trigger_type}</span></td>
+            <td>${t.condition.replace(/_/g, ' ')}</td>
+            <td>${fmt(t.target_value)}</td>
+            <td>${t.thesis_title || '—'}</td>
+            <td><input type="checkbox" ${t.active ? 'checked' : ''} onchange="toggleTrigger(${t.id}, this.checked)"></td>
+            <td><button class="btn-sm btn-del" onclick="deleteTrigger(${t.id})">✗</button></td>
+          </tr>`;
+        }).join('');
+        html += '</tbody></table></div>';
+      }
+      $('#watchlist-container').innerHTML = html;
+      const addBtn = $('#add-trigger-btn');
+      if (addBtn) addBtn.addEventListener('click', showNewTriggerForm);
+    } catch (e) {
+      $('#watchlist-container').innerHTML = errorHTML('Failed to load watchlist', loadWatchlist);
+    }
+  }
+
+  function showNewTriggerForm() {
+    const existing = $('#new-trigger-form');
+    if (existing) { existing.remove(); return; }
+    const form = document.createElement('div');
+    form.id = 'new-trigger-form';
+    form.className = 'card';
+    form.style.padding = '12px';
+    form.innerHTML = `<div class="thesis-edit-form" style="display:flex">
+      <label>Symbol<input type="text" class="wt-symbol" placeholder="AAPL" style="max-width:100px"></label>
+      <label>Type<select class="wt-type"><option value="entry">Entry</option><option value="exit">Exit</option><option value="stop_loss">Stop Loss</option><option value="take_profit">Take Profit</option></select></label>
+      <label>Condition<select class="wt-cond"><option value="price_below">Price Below</option><option value="price_above">Price Above</option><option value="pct_change">% Change</option></select></label>
+      <label>Target<input type="number" class="wt-target" step="0.01" placeholder="150.00" style="max-width:120px"></label>
+      <label>Notes<input type="text" class="wt-notes" placeholder="Optional notes"></label>
+      <button class="btn-save" onclick="createTrigger(this)">Add</button>
+    </div>`;
+    $('#watchlist-container').insertBefore(form, $('#add-trigger-btn').nextSibling);
+  }
+
+  window.createTrigger = async function(btn) {
+    const form = btn.closest('#new-trigger-form');
+    const sym = form.querySelector('.wt-symbol').value.trim();
+    const target = parseFloat(form.querySelector('.wt-target').value);
+    if (!sym || isNaN(target)) { alert('Symbol and target required'); return; }
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/fund/watchlist', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          symbol: sym,
+          trigger_type: form.querySelector('.wt-type').value,
+          condition: form.querySelector('.wt-cond').value,
+          target_value: target,
+          notes: form.querySelector('.wt-notes').value || null,
+        })
+      });
+      if (!r.ok) throw new Error(`${r.status}`);
+      loadWatchlist();
+    } catch (e) {
+      btn.disabled = false;
+      alert('Failed: ' + e.message);
+    }
+  };
+
+  window.toggleTrigger = async function(id, active) {
+    try {
+      await fetch(`/api/fund/watchlist/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ active: active ? 1 : 0 })
+      });
+    } catch (e) { loadWatchlist(); }
+  };
+
+  window.deleteTrigger = async function(id) {
+    if (!confirm('Delete this trigger?')) return;
+    try {
+      await fetch(`/api/fund/watchlist/${id}`, { method: 'DELETE' });
+      loadWatchlist();
+    } catch (e) { alert('Failed to delete'); }
+  };
 
   // ── 6. Exposure ──
   async function loadExposure() {
@@ -1140,6 +1328,7 @@
       loadMacro(),
       loadRisk(),
       loadTheses(),
+      loadWatchlist(),
       loadExposure(),
       loadCorrelation(),
       loadTreemap(),

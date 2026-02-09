@@ -65,6 +65,47 @@ class ThesisRequest(BaseModel):
     source_module: str = Field("manual", description="Source module")
 
 
+class ThesisFieldUpdate(BaseModel):
+    """Request model for editing thesis fields inline.
+
+    All fields are optional; only provided fields are updated.
+
+    Attributes:
+        title: Updated thesis title.
+        thesis_text: Updated thesis description.
+        conviction: Updated conviction level (0.0 to 1.0).
+        status: Updated status.
+        symbols: Updated list of ticker symbols.
+        strategy: Updated strategy.
+        horizon: Updated investment horizon.
+    """
+
+    title: str | None = Field(None, max_length=200, description="Title")
+    thesis_text: str | None = Field(None, description="Description")
+    conviction: float | None = Field(
+        None, ge=0.0, le=1.0, description="Conviction"
+    )
+    status: str | None = Field(
+        None,
+        pattern=(
+            "^(draft|active|monitoring|archived|"
+            "strengthening|confirmed|weakening|invalidated)$"
+        ),
+        description="Status",
+    )
+    symbols: list[str] | None = Field(None, description="Symbols")
+    strategy: str | None = Field(
+        None,
+        pattern="^(long|short|long_short)$",
+        description="Strategy",
+    )
+    horizon: str | None = Field(
+        None,
+        pattern="^(1d|1w|1m|3m|6m|1y)$",
+        description="Horizon",
+    )
+
+
 class ThesisUpdate(BaseModel):
     """Request model for updating thesis status.
 
@@ -367,6 +408,124 @@ async def create_thesis(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create thesis: {str(e)}",
         )
+
+
+@router.patch("/theses/{thesis_id}", response_model=ThesisResponse)
+async def edit_thesis_fields(
+    thesis_id: int,
+    body: ThesisFieldUpdate,
+    engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
+) -> ThesisResponse:
+    """Edit thesis fields inline (title, text, conviction, etc.).
+
+    Only provided (non-None) fields are updated. This is the endpoint
+    used by the dashboard inline editor, distinct from the status
+    transition PUT endpoint.
+
+    Args:
+        thesis_id: ID of the thesis to edit.
+        body: Fields to update.
+        engines: Engine container with database.
+        user: Authenticated user.
+
+    Returns:
+        ThesisResponse with updated data.
+
+    Raises:
+        HTTPException: If thesis not found or no fields provided.
+    """
+    import json
+
+    thesis = engines.db.fetchone(
+        "SELECT * FROM theses WHERE id = ?", (thesis_id,)
+    )
+    if not thesis:
+        raise HTTPException(
+            status_code=404, detail=f"Thesis {thesis_id} not found"
+        )
+
+    updates: dict[str, Any] = {}
+    if body.title is not None:
+        updates["title"] = body.title
+    if body.thesis_text is not None:
+        updates["thesis_text"] = body.thesis_text
+    if body.conviction is not None:
+        updates["conviction"] = body.conviction
+    if body.status is not None:
+        updates["status"] = body.status
+    if body.symbols is not None:
+        updates["symbols"] = json.dumps(body.symbols)
+    if body.strategy is not None:
+        updates["strategy"] = body.strategy
+    if body.horizon is not None:
+        updates["horizon"] = body.horizon
+
+    if not updates:
+        raise HTTPException(
+            status_code=400, detail="No fields to update"
+        )
+
+    updates["updated_at"] = "datetime('now')"
+    set_parts = []
+    values = []
+    for k, v in updates.items():
+        if k == "updated_at":
+            set_parts.append(f"{k} = datetime('now')")
+        else:
+            set_parts.append(f"{k} = ?")
+            values.append(v)
+    values.append(thesis_id)
+
+    engines.db.execute(
+        f"UPDATE theses SET {', '.join(set_parts)} WHERE id = ?",
+        tuple(values),
+    )
+    engines.db.connect().commit()
+
+    # Fetch updated thesis and build response
+    updated = engines.db.fetchone(
+        "SELECT * FROM theses WHERE id = ?", (thesis_id,)
+    )
+    symbols = json.loads(updated["symbols"]) if updated["symbols"] else []
+    universe_keywords = (
+        json.loads(updated["universe_keywords"])
+        if updated["universe_keywords"]
+        else []
+    )
+    validation_criteria = (
+        json.loads(updated["validation_criteria"])
+        if updated["validation_criteria"]
+        else []
+    )
+    failure_criteria = (
+        json.loads(updated["failure_criteria"])
+        if updated["failure_criteria"]
+        else []
+    )
+
+    return ThesisResponse(
+        id=updated["id"],
+        title=updated["title"],
+        thesis_text=updated["thesis_text"],
+        strategy=updated["strategy"],
+        status=updated["status"],
+        symbols=symbols,
+        universe_keywords=universe_keywords,
+        validation_criteria=validation_criteria,
+        failure_criteria=failure_criteria,
+        horizon=updated["horizon"],
+        conviction=updated["conviction"],
+        source_module=updated["source_module"] or "manual",
+        created_at=updated["created_at"],
+        updated_at=updated["updated_at"],
+        positions_count=0,
+        total_value=0.0,
+        unrealized_pnl=0.0,
+        signals_pending=0,
+        signals_approved=0,
+        signals_rejected=0,
+    )
 
 
 @router.put("/theses/{thesis_id}", response_model=ThesisResponse)
