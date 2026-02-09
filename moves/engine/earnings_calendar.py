@@ -16,9 +16,8 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import UTC, datetime, date as date_type
+from datetime import datetime, date as date_type
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 

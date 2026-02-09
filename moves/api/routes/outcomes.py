@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from api.auth import get_current_user
 from api.deps import get_engines
