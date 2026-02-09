@@ -58,7 +58,7 @@ def cmd_think(idea: str) -> dict[str, Any]:
         session_key = f"thoughts-thesis-{thesis['id']}"
         session_id = engine.create_session(thesis['id'], session_key)
         conviction = thesis.get("conviction", 0) or 0
-        pct = int(conviction * 100)
+        pct = int(conviction) if conviction > 1 else int(conviction * 100)
 
         message = (
             f"🧠 Deepening thesis: {thesis['title']}\n"
@@ -160,7 +160,7 @@ def cmd_journal() -> str:
         sections.append("**Active Theses:**")
         for t in theses[:5]:
             conviction = t.get("conviction", 0) or 0
-            pct = int(conviction * 100)
+            pct = int(conviction) if conviction > 1 else int(conviction * 100)
             sections.append(
                 f"  • {t['title']} — {pct}% conviction"
             )
@@ -175,7 +175,7 @@ def cmd_journal() -> str:
         for s in all_sessions[:5]:
             date = s.get("created_at", "")[:10]
             status = s.get("status", "?")
-            summary = s.get("summary", "No summary")[:80]
+            summary = (s.get("summary") or "No summary")[:80]
             sections.append(
                 f"  • [{date}] #{s['id']} ({status}): {summary}"
             )
@@ -219,7 +219,11 @@ def _parse_thesis_symbols(thesis: dict[str, Any]) -> list[str]:
     raw = thesis.get("symbols", "[]")
     if not raw:
         return []
-    try:
-        return json.loads(raw) if isinstance(raw, str) else list(raw)
-    except (json.JSONDecodeError, TypeError):
-        return []
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            return list(parsed) if isinstance(parsed, list) else [str(parsed)]
+        except (json.JSONDecodeError, TypeError):
+            # Comma-separated string
+            return [s.strip() for s in raw.split(",") if s.strip()]
+    return list(raw) if raw else []

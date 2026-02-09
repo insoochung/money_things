@@ -45,13 +45,16 @@ def find_thesis_by_idea(
 
 def _parse_symbols(thesis: dict[str, Any]) -> list[str]:
     """Extract symbol list from a thesis dict."""
-    raw = thesis.get("symbols", "[]")
+    raw = thesis.get("symbols", "")
     if not raw:
         return []
-    try:
-        return json.loads(raw) if isinstance(raw, str) else list(raw)
-    except (json.JSONDecodeError, TypeError):
-        return []
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            return list(parsed) if isinstance(parsed, list) else [str(parsed)]
+        except (json.JSONDecodeError, TypeError):
+            return [s.strip() for s in raw.split(",") if s.strip()]
+    return list(raw) if raw else []
 
 
 def gather_thesis_context(
@@ -143,7 +146,7 @@ def build_new_idea_context(idea: str) -> dict[str, Any]:
 def _format_thesis_section(thesis: dict[str, Any]) -> str:
     """Format thesis details as readable text."""
     conviction = thesis.get("conviction", 0)
-    pct = int(conviction * 100) if conviction else 0
+    pct = int(conviction) if conviction and conviction > 1 else int((conviction or 0) * 100)
     return (
         f"**Thesis #{thesis['id']}: {thesis['title']}**\n"
         f"Status: {thesis.get('status', 'unknown')} | "
@@ -230,11 +233,11 @@ def compute_slow_to_act_gates(
     return {
         "session_count": session_count,
         "meets_session_minimum": session_count >= 2,
-        "meets_conviction_threshold": conviction >= 0.7,
+        "meets_conviction_threshold": conviction >= 70 if conviction > 1 else conviction >= 0.7,
         "cooldown_ok": cooldown_ok,
         "can_generate_signals": (
             session_count >= 2
-            and conviction >= 0.7
+            and (conviction >= 70 if conviction > 1 else conviction >= 0.7)
             and cooldown_ok
         ),
     }
