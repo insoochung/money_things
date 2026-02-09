@@ -94,7 +94,10 @@ class CongressTradesEngine:
             if trade:
                 trades.append(trade)
 
-        logger.info("Fetched %d congress trades from House Stock Watcher (last %d days)", len(trades), days)
+        logger.info(
+            "Fetched %d congress trades from House Stock Watcher (last %d days)",
+            len(trades), days,
+        )
         return trades
 
     def _parse_house_stock_watcher_entry(self, raw: dict, cutoff: datetime) -> dict | None:
@@ -287,7 +290,8 @@ class CongressTradesEngine:
         position_symbols = {r["symbol"] for r in position_rows}
 
         thesis_rows = self.db.fetchall(
-            "SELECT symbols FROM theses WHERE status IN ('active', 'strengthening', 'confirmed') AND user_id = ?",
+            "SELECT symbols FROM theses WHERE status IN "
+            "('active', 'strengthening', 'confirmed') AND user_id = ?",
             (user_id,),
         )
         thesis_symbols: set[str] = set()
@@ -346,7 +350,7 @@ class CongressTradesEngine:
                 reasoning=f"Congress member {trade.get('politician', 'unknown')} bought {symbol}",
                 status=SignalStatus.PENDING,
             )
-            created = self.signal_engine.create_signal(signal, user_id)
+            created = self.signal_engine.create_signal(signal)
             signals.append(created)
 
         logger.info("Generated %d signals from congress trades", len(signals))

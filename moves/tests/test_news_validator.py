@@ -216,6 +216,89 @@ class TestCheckStale:
         assert 1 not in thesis_ids
 
 
+class TestScoreNewsItem:
+    """Tests for the detailed news scoring function."""
+
+    def test_score_supporting_item(self, engines):
+        """Supporting items get positive score with matched keywords."""
+        thesis = engines["thesis_engine"].get_thesis(1)
+        result = engines["validator"].score_news_item(
+            headline="AI chip revenue surge continues",
+            url="https://example.com/1",
+            summary="NVIDIA reports record quarterly earnings driven by AI demand",
+            thesis=thesis,
+        )
+        assert result["sentiment"] == "supporting"
+        assert result["score"] > 0
+        assert len(result["matched_keywords"]) > 0
+
+    def test_score_contradicting_item(self, engines):
+        """Contradicting items are identified correctly."""
+        thesis = engines["thesis_engine"].get_thesis(1)
+        result = engines["validator"].score_news_item(
+            headline="Major capex cuts announced by hyperscalers",
+            url="https://example.com/2",
+            summary="Cloud companies slash spending amid economic downturn",
+            thesis=thesis,
+        )
+        assert result["sentiment"] == "contradicting"
+
+    def test_score_neutral_item(self, engines):
+        """Unrelated items score as neutral with low score."""
+        thesis = engines["thesis_engine"].get_thesis(1)
+        result = engines["validator"].score_news_item(
+            headline="Weather forecast for the weekend",
+            url="https://example.com/3",
+            summary="Expect sunny skies across the northeast",
+            thesis=thesis,
+        )
+        assert result["sentiment"] == "neutral"
+        assert result["score"] < 0.5
+
+    def test_score_includes_summary_text(self, engines):
+        """Summary text is used in scoring, not just headline."""
+        thesis = engines["thesis_engine"].get_thesis(1)
+        # Headline is generic but summary has keywords
+        result = engines["validator"].score_news_item(
+            headline="Quarterly earnings report",
+            url="https://example.com/4",
+            summary="AI chip revenue surge and capex spending increases in Q4",
+            thesis=thesis,
+        )
+        assert result["sentiment"] == "supporting"
+
+
+class TestScoreNewsBatch:
+    """Tests for batch scoring of externally-provided news."""
+
+    def test_batch_scores_and_stores(self, engines):
+        """Batch scoring stores results in thesis_news."""
+        items = [
+            {"headline": "AI chip revenue surge", "url": "https://a.com/1", "summary": ""},
+            {"headline": "Random news", "url": "https://a.com/2", "summary": ""},
+        ]
+        results = engines["validator"].score_news_batch(1, items)
+        assert len(results) == 2
+
+        rows = engines["db"].fetchall("SELECT * FROM thesis_news WHERE thesis_id = 1")
+        assert len(rows) == 2
+
+    def test_batch_deduplicates_by_url(self, engines):
+        """Duplicate URLs are skipped in batch scoring."""
+        items = [
+            {"headline": "AI chip revenue surge", "url": "https://a.com/1", "summary": ""},
+        ]
+        engines["validator"].score_news_batch(1, items)
+        results2 = engines["validator"].score_news_batch(1, items)
+        assert len(results2) == 0
+
+    def test_batch_nonexistent_thesis(self, engines):
+        """Returns empty for nonexistent thesis."""
+        items = [{"headline": "x", "url": "y", "summary": ""}]
+        results = engines["validator"].score_news_batch(999, items)
+        assert results == []
+
+
 class TestValidateThesis:
     """Tests for the full validation cycle."""
 

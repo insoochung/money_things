@@ -111,7 +111,10 @@ class TestFetchRecent:
         mock_client_cls.return_value = mock_client
 
         # Force Capitol Trades path by making S3 fail first
-        with patch.object(congress_engine, "_fetch_house_stock_watcher", side_effect=Exception("skip")):
+        with patch.object(
+            congress_engine, "_fetch_house_stock_watcher",
+            side_effect=Exception("skip"),
+        ):
             trades = congress_engine.fetch_recent(days=30)
         assert len(trades) == 3
         assert trades[0]["politician"] == "Nancy Pelosi"
@@ -177,7 +180,6 @@ class TestHouseStockWatcherParsing:
     @patch("engine.congress.httpx.Client")
     def test_fetch_house_stock_watcher_integration(self, mock_client_cls, congress_engine):
         """Full S3 fetch parses and filters correctly."""
-        import json
 
         mock_resp = MagicMock()
         mock_resp.json.return_value = SAMPLE_HOUSE_STOCK_WATCHER_JSON

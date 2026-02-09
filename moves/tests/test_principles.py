@@ -63,7 +63,7 @@ def test_create_principle(db) -> None:
     correctly. Uses the empty ``db`` fixture since no pre-existing data is needed.
     """
     pe = PrinciplesEngine(db)
-    pid = pe.create_principle(user_id=1, 
+    pid = pe.create_principle(user_id=1,
         text="Test principle",
         category="risk",
         origin="user_input",

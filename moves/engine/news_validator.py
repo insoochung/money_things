@@ -214,8 +214,14 @@ class NewsValidator:
         keyword_score = len(matched) / max(len(all_keywords), 1)
 
         # Sentiment heuristics
-        positive_words = {"surge", "growth", "increase", "record", "strong", "rally", "boost", "gains", "bullish", "accelerate"}
-        negative_words = {"decline", "drop", "fall", "cut", "weak", "crash", "loss", "bearish", "slowdown", "plunge"}
+        positive_words = {
+            "surge", "growth", "increase", "record", "strong",
+            "rally", "boost", "gains", "bullish", "accelerate",
+        }
+        negative_words = {
+            "decline", "drop", "fall", "cut", "weak",
+            "crash", "loss", "bearish", "slowdown", "plunge",
+        }
 
         pos_count = sum(1 for w in positive_words if w in text)
         neg_count = sum(1 for w in negative_words if w in text)
@@ -239,7 +245,10 @@ class NewsValidator:
             "sentiment": sentiment,
             "score": round(score, 3),
             "matched_keywords": matched,
-            "explanation": "; ".join(explanation_parts) if explanation_parts else "no strong signals",
+            "explanation": (
+                "; ".join(explanation_parts)
+                if explanation_parts else "no strong signals"
+            ),
         }
 
     def _extract_keywords(self, thesis: Thesis) -> list[str]:

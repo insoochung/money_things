@@ -151,7 +151,7 @@ def job_stale_thesis_check(thesis_engine: ThesisEngine, db: Database) -> None:
 
 
 def job_news_scan(
-    validator: "NewsValidator",
+    validator: NewsValidator,
 ) -> None:
     """Validate all active theses against news (global scan).
 
@@ -161,7 +161,6 @@ def job_news_scan(
     Args:
         validator: NewsValidator instance.
     """
-    from engine.news_validator import NewsValidator
 
     logger.info("news_scan: validating all active theses")
     try:
