@@ -59,12 +59,12 @@ Live at **https://munnythoughts.com** with Google OAuth.
 ### P1 — Important
 3. **Dashboard watchlist triggers not visible without auth bypass**: Can't verify visually. Need test or screenshot.
 4. ~~**Earnings calendar is a static JSON file**~~: ✅ **DONE (2026-02-09)** — `earnings_calendar.py` now falls back to yfinance API for symbols not in static JSON. 24h cache. 14 tests. Commit `218ddbd`.
-5. **Test suite hangs when run all-together**: Individual files pass (538 tests) but running `pytest tests/` hangs. Likely SQLite locking under concurrent access. Need `--forked` or DB isolation.
+5. ~~**Test suite hangs when run all-together**~~: ✅ **DONE (2026-02-09)** — Root cause: import conflict (both modules have `engine/` package). Created `run_tests.sh` that runs each module's tests in its own venv. 622 tests pass (451 moves + 171 thoughts). Commit `8443847`.
 
 ### P2 — Nice to Have
 6. ~~**No `/think` result parsing**~~: ✅ **DONE (2026-02-09)** — `commands.cmd_think_result()` parses sub-agent JSON, auto-applies research artifacts (journal entries, notes, ticker recs), formats Telegram summary, and returns inline button specs for approve/reject of conviction and thesis changes. `cmd_think_approve()` / `cmd_think_reject()` handle callbacks. 12 new tests. Commit `08771dd`.
 7. **Import more journal data**: Research files (META.md, QCOM.md etc.) have rich content that could be imported as research notes.
-8. **Congress scoring not wired into signal generator**: The `congress_scoring.py` module exists but the signal generator uses a basic `thesis_congress` table check, not the full scoring engine.
+8. ~~**Congress scoring not wired into signal generator**~~: ✅ **DONE (2026-02-09)** — `SignalGenerator` now uses `PoliticianScorer.score_trade()` for congress alignment factor. Trades weighted by size, stock-vs-ETF, committee relevance, politician tier. Enriched reasoning shows politician details in signal output. 5 new tests. Commit `7dff5ec`.
 
 ### P3 — Deferred
 9. **Schwab API activation**: Waiting on Schwab.
@@ -77,9 +77,9 @@ Live at **https://munnythoughts.com** with Google OAuth.
 
 | Module | Lines | Tests | Lint | Grade |
 |--------|-------|-------|------|-------|
-| moves/ | ~22K | 393 | ✅ | A- |
-| thoughts/ | ~11K | 157 | ✅ | A- |
-| **Total** | **33K** | **550** | **✅** | **A-** |
+| moves/ | ~22K | 451 | ✅ | A |
+| thoughts/ | ~11K | 171 | ✅ | A- |
+| **Total** | **33K** | **622** | **✅** | **A** |
 
 **Thoughts grade rationale (A-):** Core engine, bridge, commands, and feedback loop all work. Sub-agent output is parsed, auto-applied, and presented with approve/reject buttons. The full /think → research → parse → approve → DB update pipeline is functional.
 
@@ -87,4 +87,4 @@ Live at **https://munnythoughts.com** with Google OAuth.
 
 ## Recommendation
 
-**Next session priority**: Fix test suite hanging (P1 #5) or wire congress scoring into signal generator (P2 #8). The core /think loop is now fully functional end-to-end.
+**Next session priority**: Import journal research data as notes (P2 #7) or dashboard auth bypass testing (P1 #3). The core /think loop, test infrastructure, and scoring pipeline are all fully functional.
