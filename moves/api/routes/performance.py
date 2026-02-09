@@ -275,8 +275,10 @@ async def get_performance_metrics(
         from api.benchmark import (
             align_series,
             compute_benchmark_stats,
-            daily_returns as calc_daily_returns,
             fetch_benchmark_prices,
+        )
+        from api.benchmark import (
+            daily_returns as calc_daily_returns,
         )
 
         information_ratio = 0.0
@@ -367,33 +369,52 @@ async def get_benchmark_comparison(
                 detail="No portfolio data found for comparison",
             )
 
-        # Get benchmark prices (placeholder - would use pricing service)
-        # For now, return mock data
-        portfolio_return_pct = 15.2  # Placeholder
-        benchmark_return_pct = 12.8  # Placeholder
+        from api.benchmark import (
+            align_series,
+            compute_benchmark_stats,
+            fetch_benchmark_prices,
+        )
+        from api.benchmark import (
+            daily_returns as calc_daily_returns,
+        )
 
-        dates = [pv["date"] for pv in portfolio_values]
-        portfolio_values_list = [pv["total_value"] for pv in portfolio_values]
+        first_date = portfolio_values[0]["date"]
+        last_date = portfolio_values[-1]["date"]
+        bm_data = fetch_benchmark_prices(benchmark, first_date, last_date)
 
-        # Calculate cumulative returns
-        start_value = portfolio_values_list[0]
-        portfolio_cumulative = [(v / start_value - 1) * 100 for v in portfolio_values_list]
+        pf_vals, bm_vals, common_dates = align_series(portfolio_values, bm_data)
 
-        # Mock benchmark data (would be calculated from real prices)
-        benchmark_cumulative = [i * 0.03 for i in range(len(dates))]  # Mock 3% per period
+        if len(pf_vals) < 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Insufficient overlapping data for benchmark comparison",
+            )
+
+        # Total returns over period
+        portfolio_return_pct = (pf_vals[-1] / pf_vals[0] - 1) * 100
+        benchmark_return_pct = (bm_vals[-1] / bm_vals[0] - 1) * 100
+
+        # Cumulative return series
+        portfolio_cumulative = [(v / pf_vals[0] - 1) * 100 for v in pf_vals]
+        benchmark_cumulative = [(v / bm_vals[0] - 1) * 100 for v in bm_vals]
+
+        # Compute stats
+        pf_rets = calc_daily_returns(pf_vals)
+        bm_rets = calc_daily_returns(bm_vals)
+        stats = compute_benchmark_stats(pf_rets, bm_rets)
 
         return BenchmarkComparison(
             benchmark_symbol=benchmark,
-            portfolio_return_pct=portfolio_return_pct,
-            benchmark_return_pct=benchmark_return_pct,
-            alpha_pct=2.4,  # Placeholder
-            beta=1.15,  # Placeholder
-            correlation=0.82,  # Placeholder
-            tracking_error_pct=8.5,  # Placeholder
-            information_ratio=0.28,  # Placeholder
-            up_capture_pct=105.0,  # Placeholder
-            down_capture_pct=95.0,  # Placeholder
-            dates=dates,
+            portfolio_return_pct=round(portfolio_return_pct, 4),
+            benchmark_return_pct=round(benchmark_return_pct, 4),
+            alpha_pct=stats["alpha_pct"],
+            beta=stats["beta"],
+            correlation=stats["correlation"],
+            tracking_error_pct=stats["tracking_error_pct"],
+            information_ratio=stats["information_ratio"],
+            up_capture_pct=stats["up_capture_pct"],
+            down_capture_pct=stats["down_capture_pct"],
+            dates=common_dates,
             portfolio_values=portfolio_cumulative,
             benchmark_values=benchmark_cumulative,
         )

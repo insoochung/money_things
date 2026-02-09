@@ -201,9 +201,19 @@ async def get_fund_status(
         cost_basis = portfolio_value["cost_basis"]
         total_return_pct = ((nav - cost_basis) / cost_basis * 100) if cost_basis > 0 else 0.0
 
-        # Daily return (placeholder - would need historical NAV)
-        day_return_pct = 0.0  # TODO: Calculate from yesterday's NAV
-        day_pnl = 0.0  # TODO: Calculate from yesterday's NAV
+        # Daily return from yesterday's NAV
+        yesterday_nav = engines.db.fetchone("""
+            SELECT total_value FROM portfolio_value
+            WHERE date < (SELECT MAX(date) FROM portfolio_value)
+            ORDER BY date DESC LIMIT 1
+        """)
+        if yesterday_nav and yesterday_nav["total_value"] > 0:
+            prev = yesterday_nav["total_value"]
+            day_return_pct = (nav - prev) / prev * 100
+            day_pnl = nav - prev
+        else:
+            day_return_pct = 0.0
+            day_pnl = 0.0
 
         # Get realized P/L (YTD)
         realized_pnl = engines.db.fetchone("""
@@ -471,7 +481,7 @@ async def get_exposure(
         long_exposure = 0.0
         short_exposure = 0.0
         by_thesis: dict[str, float] = {}
-        by_sector: dict[str, float] = {}  # TODO: Add sector classification
+        by_sector: dict[str, float] = {}
         max_position_value = 0.0
 
         for position in positions:
