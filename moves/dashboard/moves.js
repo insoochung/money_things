@@ -36,9 +36,27 @@
     return Math.floor(s / 86400) + 'd ago';
   }
 
-  async function api(path) {
-    const r = await fetch(path);
+  async function api(path, opts) {
+    const r = await fetch(path, opts);
+    if (r.status === 401 || r.status === 403) {
+      window.location.href = '/auth/login';
+      throw new Error('Session expired');
+    }
     if (!r.ok) throw new Error(`${r.status}`);
+    return r.json();
+  }
+
+  /** POST/PUT/DELETE helper that also handles auth redirects. */
+  async function apiWrite(path, method, body) {
+    const opts = { method, headers: {'Content-Type':'application/json'} };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const r = await fetch(path, opts);
+    if (r.status === 401 || r.status === 403) {
+      window.location.href = '/auth/login';
+      throw new Error('Session expired');
+    }
+    if (!r.ok) throw new Error(`${r.status}`);
+    if (r.status === 204 || r.headers.get('content-length') === '0') return null;
     return r.json();
   }
 
@@ -259,8 +277,7 @@
     btn.disabled = true;
     btn.textContent = 'Saving...';
     try {
-      const r = await fetch(`/api/fund/theses/${id}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
-      if (!r.ok) throw new Error(`${r.status}`);
+      await apiWrite(`/api/fund/theses/${id}`, 'PATCH', data);
       btn.textContent = '✓ Saved';
       setTimeout(() => loadTheses(), 800);
     } catch (e) {
@@ -284,8 +301,7 @@
     };
     btn.disabled = true;
     try {
-      const r = await fetch('/api/fund/theses', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
-      if (!r.ok) throw new Error(`${r.status}`);
+      await apiWrite('/api/fund/theses', 'POST', data);
       loadTheses();
     } catch (e) {
       btn.disabled = false;
@@ -352,18 +368,13 @@
     if (!sym || isNaN(target)) { alert('Symbol and target required'); return; }
     btn.disabled = true;
     try {
-      const r = await fetch('/api/fund/watchlist', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({
-          symbol: sym,
-          trigger_type: form.querySelector('.wt-type').value,
-          condition: form.querySelector('.wt-cond').value,
-          target_value: target,
-          notes: form.querySelector('.wt-notes').value || null,
-        })
+      await apiWrite('/api/fund/watchlist', 'POST', {
+        symbol: sym,
+        trigger_type: form.querySelector('.wt-type').value,
+        condition: form.querySelector('.wt-cond').value,
+        target_value: target,
+        notes: form.querySelector('.wt-notes').value || null,
       });
-      if (!r.ok) throw new Error(`${r.status}`);
       loadWatchlist();
     } catch (e) {
       btn.disabled = false;
@@ -373,18 +384,14 @@
 
   window.toggleTrigger = async function(id, active) {
     try {
-      await fetch(`/api/fund/watchlist/${id}`, {
-        method: 'PUT',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ active: active ? 1 : 0 })
-      });
+      await apiWrite(`/api/fund/watchlist/${id}`, 'PUT', { active: active ? 1 : 0 });
     } catch (e) { loadWatchlist(); }
   };
 
   window.deleteTrigger = async function(id) {
     if (!confirm('Delete this trigger?')) return;
     try {
-      await fetch(`/api/fund/watchlist/${id}`, { method: 'DELETE' });
+      await apiWrite(`/api/fund/watchlist/${id}`, 'DELETE');
       loadWatchlist();
     } catch (e) { alert('Failed to delete'); }
   };
@@ -916,8 +923,7 @@
     const btns = $$(`[data-id="${signalId}"]`);
     btns.forEach(b => b.disabled = true);
     try {
-      const r = await fetch(`/api/fund/signals/${signalId}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
-      if (!r.ok) throw new Error(`${r.status}`);
+      await apiWrite(`/api/fund/signals/${signalId}/${action}`, 'POST', {});
       loadSignals(); // refresh
     } catch (e) {
       btns.forEach(b => b.disabled = false);
@@ -1093,11 +1099,7 @@
 
   window.addDiscovery = async function(text, category) {
     try {
-      await fetch('/api/fund/principles', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ text, category, origin: 'pattern_discovery' })
-      });
+      await apiWrite('/api/fund/principles', 'POST', { text, category, origin: 'pattern_discovery' });
       loadPrinciples();
     } catch (e) { console.error('Failed to add principle:', e); }
   };
@@ -1229,14 +1231,9 @@
   // Global clone handler
   window.cloneThesis = async function(thesisId) {
     try {
-      const r = await fetch(`/api/fund/shared-theses/${thesisId}/clone`, { method: 'POST' });
-      if (r.ok) {
-        const d = await r.json();
-        alert(`Thesis cloned! New thesis ID: ${d.new_thesis_id}`);
-        loadTheses();
-      } else {
-        alert('Failed to clone thesis');
-      }
+      const d = await apiWrite(`/api/fund/shared-theses/${thesisId}/clone`, 'POST');
+      alert(`Thesis cloned! New thesis ID: ${d.new_thesis_id}`);
+      loadTheses();
     } catch (e) { alert('Error cloning thesis'); }
   };
 
@@ -1370,13 +1367,7 @@
     btn.textContent = 'Saving...';
     fb.innerHTML = '';
     try {
-      const r = await fetch('/api/fund/trades/manual', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || r.status);
+      const d = await apiWrite('/api/fund/trades/manual', 'POST', body);
       fb.innerHTML = `<span class="positive">✓ ${d.message}</span>`;
       // Clear form
       $('#tf-symbol').value = '';
