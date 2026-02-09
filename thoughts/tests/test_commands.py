@@ -135,3 +135,110 @@ class TestCmdJournal:
         result = commands.cmd_journal()
         assert "Recent Notes" in result
         assert "Test observation" in result
+
+
+# Sample valid sub-agent output JSON
+_VALID_OUTPUT = """\
+Here is my research analysis.
+
+```json
+{
+  "research_summary": "AMD showing strong momentum in AI inference. MI300X gaining traction.",
+  "thesis_update": {
+    "title": null,
+    "description": "AMD AI inference thesis strengthened by MI300X adoption",
+    "status": "strengthening"
+  },
+  "ticker_recommendations": [
+    {"symbol": "AMD", "action": "add", "reasoning": "MI300X ramp accelerating"},
+    {"symbol": "NVDA", "action": "watch", "reasoning": "Competitor pressure"}
+  ],
+  "critic_assessment": "Risk: NVIDIA dominant. AMD needs sustained execution.",
+  "conviction_change": {
+    "old_value": 0.6,
+    "new_value": 0.75,
+    "reasoning": "MI300X traction validates thesis"
+  }
+}
+```
+"""
+
+_INVALID_OUTPUT = "Sorry, I couldn't complete the research. No JSON here."
+
+
+class TestCmdThinkResult:
+    def test_parses_valid_output(self) -> None:
+        result = commands.cmd_think_result(_VALID_OUTPUT, thesis_id=1)
+        assert result["parsed"] is True
+        assert "Research complete" in result["message"]
+        assert "AMD" in result["message"]
+        assert len(result["applied"]) > 0
+        assert len(result["pending"]) > 0
+
+    def test_returns_buttons_for_pending(self) -> None:
+        result = commands.cmd_think_result(_VALID_OUTPUT, thesis_id=1)
+        assert len(result["buttons"]) >= 2
+        # Should have approve and reject buttons for conviction
+        cb_data = [b["callback_data"] for b in result["buttons"]]
+        assert any("think_approve:conviction:1" in d for d in cb_data)
+        assert any("think_reject:conviction:1" in d for d in cb_data)
+        # Should have thesis update buttons too
+        assert any("think_approve:thesis:1" in d for d in cb_data)
+
+    def test_handles_invalid_output(self) -> None:
+        result = commands.cmd_think_result(_INVALID_OUTPUT, thesis_id=1)
+        assert result["parsed"] is False
+        assert "Could not parse" in result["message"]
+        assert result["buttons"] == []
+
+    def test_no_thesis_id_skips_db(self) -> None:
+        result = commands.cmd_think_result(_VALID_OUTPUT, thesis_id=None)
+        assert result["parsed"] is True
+        assert "standalone" in result["message"]
+        assert result["applied"] == []
+        assert result["pending"] == []
+
+    def test_conviction_in_summary(self) -> None:
+        result = commands.cmd_think_result(_VALID_OUTPUT, thesis_id=1)
+        assert "Conviction" in result["message"]
+        assert "75%" in result["message"]
+
+    def test_auto_applied_changes(self) -> None:
+        result = commands.cmd_think_result(_VALID_OUTPUT, thesis_id=1)
+        applied = result["applied"]
+        assert any("Research summary" in a for a in applied)
+        assert any("Critic" in a for a in applied)
+        assert any("AMD" in a for a in applied)
+
+
+class TestCmdThinkApprove:
+    def test_approve_conviction(self) -> None:
+        result = commands.cmd_think_approve("think_approve:conviction:1:75")
+        assert "updated" in result.lower() or "✅" in result
+        # Verify DB was updated
+        engine = commands._get_engine()
+        thesis = engine.get_thesis(1)
+        assert thesis is not None
+        assert thesis["conviction"] == 75
+
+    def test_approve_thesis(self) -> None:
+        result = commands.cmd_think_approve("think_approve:thesis:1")
+        assert "✅" in result
+
+    def test_invalid_data(self) -> None:
+        result = commands.cmd_think_approve("bad")
+        assert "❌" in result
+
+
+class TestCmdThinkReject:
+    def test_reject_conviction(self) -> None:
+        result = commands.cmd_think_reject("think_reject:conviction:1")
+        assert "skipped" in result.lower()
+
+    def test_reject_thesis(self) -> None:
+        result = commands.cmd_think_reject("think_reject:thesis:1")
+        assert "skipped" in result.lower()
+
+    def test_invalid_data(self) -> None:
+        result = commands.cmd_think_reject("bad")
+        assert "❌" in result

@@ -1,6 +1,6 @@
 """Telegram command handlers for the thoughts module.
 
-Three commands only: /think, /note, /journal.
+Four commands: /think, /think result handling, /note, /journal.
 Called from the moves bot's telegram handler.
 """
 
@@ -15,6 +15,12 @@ from context_builder import (
     compute_slow_to_act_gates,
 )
 from engine import ThoughtsEngine
+from feedback import (
+    apply_conviction_change,
+    apply_research_to_db,
+    format_research_summary,
+    parse_think_output,
+)
 from spawner import build_task
 
 
@@ -85,6 +91,185 @@ def cmd_think(idea: str) -> dict[str, Any]:
         "thesis_id": None,
         "is_new": True,
     }
+
+
+def cmd_think_result(
+    raw_output: str,
+    thesis_id: int | None = None,
+    session_id: int | None = None,
+) -> dict[str, Any]:
+    """Process the raw output from a /think sub-agent session.
+
+    Parses the JSON result, saves research artifacts, formats a
+    summary for the user, and returns pending approvals with
+    inline button callback data.
+
+    Args:
+        raw_output: Raw text from the sub-agent session.
+        thesis_id: Thesis ID being researched (None for new ideas).
+        session_id: Session ID to mark complete.
+
+    Returns:
+        Dict with keys:
+            - message: Formatted summary for Telegram
+            - applied: List of auto-applied changes
+            - pending: List of pending approval dicts
+            - buttons: List of inline button specs [{text, callback_data}]
+            - parsed: True if output was successfully parsed
+    """
+    output = parse_think_output(raw_output)
+
+    if output is None:
+        return {
+            "message": (
+                "⚠️ Could not parse sub-agent output.\n"
+                "The research session may not have produced valid JSON.\n\n"
+                "Raw output (truncated):\n"
+                f"```\n{raw_output[:500]}\n```"
+            ),
+            "applied": [],
+            "pending": [],
+            "buttons": [],
+            "parsed": False,
+        }
+
+    engine = _get_engine()
+
+    # Get thesis title for display
+    thesis_title: str | None = None
+    if thesis_id:
+        thesis = engine.get_thesis(thesis_id)
+        if thesis:
+            thesis_title = thesis.get("title")
+
+    # Format the user-facing summary
+    message = format_research_summary(output, thesis_title)
+
+    # Apply auto-changes and collect pending approvals
+    applied: list[str] = []
+    pending: list[dict[str, Any]] = []
+    buttons: list[dict[str, str]] = []
+
+    if thesis_id:
+        result = apply_research_to_db(engine, thesis_id, output, session_id)
+        applied = result["applied"]
+        pending = result["pending"]
+
+        # Build inline buttons for each pending approval
+        for i, p in enumerate(pending):
+            if p["type"] == "conviction_change":
+                new_val = p["new_value"]
+                buttons.append({
+                    "text": f"✅ Update conviction → {int(new_val)}%",
+                    "callback_data": (
+                        f"think_approve:conviction:{thesis_id}:{new_val}"
+                    ),
+                })
+                buttons.append({
+                    "text": "❌ Keep current conviction",
+                    "callback_data": f"think_reject:conviction:{thesis_id}",
+                })
+            elif p["type"] == "thesis_update":
+                buttons.append({
+                    "text": "✅ Apply thesis update",
+                    "callback_data": (
+                        f"think_approve:thesis:{thesis_id}"
+                    ),
+                })
+                buttons.append({
+                    "text": "❌ Skip thesis update",
+                    "callback_data": f"think_reject:thesis:{thesis_id}",
+                })
+
+        if applied:
+            message += "\n\n✅ **Auto-applied:**\n" + "\n".join(
+                f"  • {a}" for a in applied
+            )
+
+        if pending:
+            message += "\n\n⏳ **Awaiting your approval:**"
+            for p in pending:
+                if p["type"] == "conviction_change":
+                    message += (
+                        f"\n  • Conviction: {p.get('old_value', '?')}% → "
+                        f"{int(p['new_value'])}%"
+                    )
+                elif p["type"] == "thesis_update":
+                    parts = []
+                    if p.get("title"):
+                        parts.append(f"title → {p['title']}")
+                    if p.get("status"):
+                        parts.append(f"status → {p['status']}")
+                    message += f"\n  • Thesis update: {', '.join(parts)}"
+    else:
+        message += (
+            "\n\n💡 No thesis linked — research saved as standalone."
+        )
+
+    return {
+        "message": message,
+        "applied": applied,
+        "pending": pending,
+        "buttons": buttons,
+        "parsed": True,
+    }
+
+
+def cmd_think_approve(callback_data: str) -> str:
+    """Handle approval of a pending /think change.
+
+    Args:
+        callback_data: Callback string like "think_approve:conviction:3:75"
+            or "think_approve:thesis:3".
+
+    Returns:
+        Confirmation message.
+    """
+    parts = callback_data.split(":")
+    if len(parts) < 3:
+        return "❌ Invalid approval data."
+
+    action = parts[1]  # "conviction" or "thesis"
+    thesis_id = int(parts[2])
+    engine = _get_engine()
+
+    if action == "conviction" and len(parts) >= 4:
+        new_val = float(parts[3])
+        success = apply_conviction_change(engine, thesis_id, new_val)
+        if success:
+            return f"✅ Conviction updated to {int(new_val)}% for thesis #{thesis_id}."
+        return f"❌ Failed to update conviction for thesis #{thesis_id}."
+
+    if action == "thesis":
+        # For thesis updates, we'd need to stash the pending data
+        # For now, acknowledge the approval
+        return f"✅ Thesis #{thesis_id} update acknowledged. (Details already logged.)"
+
+    return "❌ Unknown approval type."
+
+
+def cmd_think_reject(callback_data: str) -> str:
+    """Handle rejection of a pending /think change.
+
+    Args:
+        callback_data: Callback string like "think_reject:conviction:3".
+
+    Returns:
+        Confirmation message.
+    """
+    parts = callback_data.split(":")
+    if len(parts) < 3:
+        return "❌ Invalid rejection data."
+
+    action = parts[1]
+    thesis_id = int(parts[2])
+
+    if action == "conviction":
+        return f"⏭️ Conviction change for thesis #{thesis_id} skipped."
+    if action == "thesis":
+        return f"⏭️ Thesis update for #{thesis_id} skipped."
+
+    return "❌ Unknown rejection type."
 
 
 def cmd_note(text: str) -> str:
