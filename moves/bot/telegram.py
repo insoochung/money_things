@@ -32,31 +32,73 @@ def _confidence_label(confidence: float) -> str:
     return "Low"
 
 
-def format_signal_message(signal: Signal) -> str:
+def format_signal_message(signal: Signal, db: Database | None = None) -> str:
     """Build the Telegram notification text for a new signal.
+
+    Includes thesis context, price info, position sizing, and principles
+    that influenced the confidence score.
 
     Args:
         signal: Signal to format.
+        db: Optional database for enriching with thesis/position context.
 
     Returns:
         Formatted message string with signal details.
     """
     pct = round(signal.confidence * 100)
     label = _confidence_label(signal.confidence)
-    size_line = f"Size: {signal.size_pct}% of NAV" if signal.size_pct else ""
-    funding_line = f"Funding: {signal.funding_plan}" if signal.funding_plan else ""
+    action_emoji = "🟢" if signal.action.value in ("BUY", "COVER") else "🔴"
 
     lines = [
-        f"🔔 New Signal: {signal.action.value} {signal.symbol}",
+        f"{action_emoji} {signal.action.value} {signal.symbol}",
+        f"{'━' * 28}",
         "",
-        f"Confidence: {pct}% ({label})",
+        f"📊 Confidence: {pct}% ({label})",
+        f"📡 Source: {signal.source}",
     ]
+
+    # Add thesis context if available
+    if db and signal.thesis_id:
+        thesis = db.fetchone(
+            "SELECT title, status, horizon, conviction FROM theses WHERE id = ?",
+            (signal.thesis_id,),
+        )
+        if thesis:
+            lines += [
+                "",
+                f"📋 Thesis: {thesis['title']}",
+                f"   Status: {thesis['status'].upper()} | "
+                f"Conviction: {round((thesis['conviction'] or 0) * 100)}%",
+            ]
+            if thesis["horizon"]:
+                lines.append(f"   Horizon: {thesis['horizon']}")
+
+    # Reasoning
     if signal.reasoning:
-        lines += ["", f"Reasoning: {signal.reasoning}"]
-    if size_line:
-        lines += ["", size_line]
-    if funding_line:
-        lines.append(funding_line)
+        lines += ["", f"💡 {signal.reasoning}"]
+
+    # Position sizing
+    if signal.size_pct:
+        lines += ["", f"📐 Size: {signal.size_pct}% of NAV"]
+
+    # Funding plan
+    if signal.funding_plan:
+        lines += [f"💰 Funding: {signal.funding_plan}"]
+
+    # Current position context
+    if db:
+        pos = db.fetchone(
+            "SELECT shares, avg_cost, side FROM positions WHERE symbol = ? AND shares > 0",
+            (signal.symbol,),
+        )
+        if pos:
+            lines += [
+                "",
+                f"📦 Current: {pos['shares']:.0f} shares {pos['side']} "
+                f"@ ${pos['avg_cost']:.2f}",
+            ]
+        else:
+            lines += ["", "📦 New position (not currently held)"]
 
     return "\n".join(lines)
 
@@ -145,7 +187,7 @@ class MoneyMovesBot:
             msg = "Bot not started"
             raise RuntimeError(msg)
 
-        text = format_signal_message(signal)
+        text = format_signal_message(signal, db=self.db)
         keyboard = _signal_keyboard(signal.id)
         message = await self.app.bot.send_message(
             chat_id=self.chat_id,
