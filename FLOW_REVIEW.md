@@ -58,7 +58,7 @@ Live at **https://munnythoughts.com** with Google OAuth.
 
 ### P1 — Important
 3. **Dashboard watchlist triggers not visible without auth bypass**: Can't verify visually. Need test or screenshot.
-4. **Earnings calendar is a static JSON file**: `engine/earnings_calendar.py` reads from `data/earnings_calendar.json` — need to populate this or add an API source.
+4. ~~**Earnings calendar is a static JSON file**~~: ✅ **DONE (2026-02-09)** — `earnings_calendar.py` now falls back to yfinance API for symbols not in static JSON. 24h cache. 14 tests. Commit `218ddbd`.
 5. **Test suite hangs when run all-together**: Individual files pass (538 tests) but running `pytest tests/` hangs. Likely SQLite locking under concurrent access. Need `--forked` or DB isolation.
 
 ### P2 — Nice to Have
