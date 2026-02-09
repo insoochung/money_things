@@ -299,7 +299,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
             Response from next handler, or redirect to /auth/login.
         """
         path = request.url.path
-
         # Allowlisted paths
         if path.startswith("/auth/") or path == "/health" or path.startswith("/dashboard/"):
             return await call_next(request)

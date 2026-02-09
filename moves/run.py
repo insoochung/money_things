@@ -13,9 +13,8 @@ from __future__ import annotations
 import os
 import sys
 
-# Default to testing mode if not explicitly set
-if "MOVES_TESTING" not in os.environ:
-    os.environ["MOVES_TESTING"] = "1"
+# Only enable testing mode if explicitly requested
+# (MOVES_TESTING=1 bypasses all authentication)
 
 # Ensure session secret is set for auth middleware
 if "MOVES_SESSION_SECRET_KEY" not in os.environ:
