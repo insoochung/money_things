@@ -1,20 +1,40 @@
 """Signal generation pipeline: autonomous thesis evaluation and signal creation.
 
 Evaluates active theses against current market data and generates actionable
-trading signals. This is the "brain" that connects theses to signals — the loop:
-thesis → check market data → score → generate signal.
+trading signals. Uses multi-factor confidence scoring with blocking conditions
+for earnings, trading windows, thesis maturity, and conviction gates.
+
+The confidence scoring pipeline uses six weighted factors:
+    - Thesis conviction (30%)
+    - Watchlist trigger hit (20%)
+    - News sentiment (15%)
+    - Critic assessment (15%)
+    - Calibration / win rate (10%)
+    - Congress alignment (10%)
+
+Blocking conditions (signal is not generated if any are true):
+    - Earnings within 5 days
+    - Trading window blackout (e.g., META for Insoo)
+    - Thesis age < 1 week
+    - Thesis conviction < 70%
+    - Fewer than 2 /think sessions on the thesis
 
 Classes:
     SignalGenerator: Evaluates theses and generates trading signals.
+    MultiFactorScore: Pydantic model for the multi-factor confidence breakdown.
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
+
+from pydantic import BaseModel
 
 from db.database import Database
 from engine import Signal, SignalAction, SignalSource, SignalStatus, ThesisStatus
+from engine.earnings_calendar import is_earnings_imminent
 from engine.risk import RiskManager
 from engine.signals import SignalEngine
 from engine.thesis import ThesisEngine
@@ -43,13 +63,55 @@ _BASE_POSITION_SIZE = 0.02
 # Default user_id for single-user system
 _DEFAULT_USER_ID = 1
 
+# Multi-factor weights (must sum to 1.0)
+_WEIGHT_THESIS_CONVICTION = 0.30
+_WEIGHT_WATCHLIST_TRIGGER = 0.20
+_WEIGHT_NEWS_SENTIMENT = 0.15
+_WEIGHT_CRITIC_ASSESSMENT = 0.15
+_WEIGHT_CALIBRATION = 0.10
+_WEIGHT_CONGRESS_ALIGNMENT = 0.10
+
+# Blocking thresholds
+_MIN_CONVICTION = 0.70
+_MIN_THINK_SESSIONS = 2
+_MIN_THESIS_AGE_DAYS = 7
+
+
+class MultiFactorScore(BaseModel):
+    """Breakdown of the multi-factor confidence scoring.
+
+    Each factor is a normalized 0.0–1.0 score. The weighted_total
+    is the sum of (factor * weight) across all factors.
+
+    Attributes:
+        thesis_conviction: Raw thesis conviction score.
+        watchlist_trigger: 1.0 if a trigger was hit, 0.0 otherwise.
+        news_sentiment: Average news sentiment score for the symbol.
+        critic_assessment: Last critic assessment score (0.0–1.0).
+        calibration: Historical win rate for this signal source.
+        congress_alignment: Congress trade alignment score.
+        weighted_total: Final weighted confidence score.
+        blocked: Whether the signal was blocked.
+        block_reason: Reason for blocking, if any.
+    """
+
+    thesis_conviction: float = 0.0
+    watchlist_trigger: float = 0.0
+    news_sentiment: float = 0.5
+    critic_assessment: float = 0.5
+    calibration: float = 0.5
+    congress_alignment: float = 0.5
+    weighted_total: float = 0.0
+    blocked: bool = False
+    block_reason: str = ""
+
 
 class SignalGenerator:
     """Generates trading signals by evaluating theses against market data.
 
-    Scans all active/non-archived theses, checks each symbol for price movements
-    and portfolio state, then generates BUY or SELL signals with proper confidence
-    scoring and risk checks.
+    Scans all active/non-archived theses, checks each symbol for price
+    movements and portfolio state, then generates BUY or SELL signals with
+    multi-factor confidence scoring and risk checks.
 
     Attributes:
         db: Database instance.
@@ -80,10 +142,11 @@ class SignalGenerator:
         """Main scan loop. Called by scheduler.
 
         For each non-archived thesis:
-        1. Evaluate thesis symbols for potential signals
-        2. Score confidence using the full pipeline
-        3. Run pre-trade risk checks
-        4. Create signals that pass all checks
+        1. Check blocking conditions (earnings, windows, maturity)
+        2. Evaluate thesis symbols for potential signals
+        3. Score confidence using multi-factor pipeline
+        4. Run pre-trade risk checks
+        5. Create signals that pass all checks
 
         Returns:
             List of dicts describing generated signals.
@@ -91,7 +154,6 @@ class SignalGenerator:
         logger.info("signal_scan: starting scan")
         generated: list[dict] = []
 
-        # Get all non-archived theses
         all_theses = self.thesis_engine.list_theses()
         active_theses = [
             t for t in all_theses
@@ -129,48 +191,422 @@ class SignalGenerator:
             return []
 
         results: list[dict] = []
-
-        # Get current positions
         held_symbols = self._get_held_symbols()
-
-        # Get pending signals to avoid duplicates
         pending_symbols = self._get_pending_symbols()
 
         for symbol in thesis.symbols:
-            # Skip if there's already a pending signal for this symbol
             if symbol in pending_symbols:
-                logger.debug("signal_scan: skipping %s — pending signal exists", symbol)
+                logger.debug(
+                    "signal_scan: skipping %s — pending signal exists",
+                    symbol,
+                )
                 continue
 
-            # Check price data
             trigger = self._check_price_triggers(symbol, thesis)
 
-            # Determine action based on thesis status and holdings
             if thesis.status in _BUY_STATUSES and symbol not in held_symbols:
-                # Potential BUY: thesis is positive and we don't hold it
-                if trigger or thesis.status in {ThesisStatus.STRENGTHENING, ThesisStatus.CONFIRMED}:
-                    # Generate BUY if there's a price trigger OR thesis is strong
-                    reasoning = self._build_reasoning("BUY", symbol, thesis, trigger)
-                    raw_confidence = self._compute_raw_confidence(thesis, trigger)
-                    result = self._generate_signal(
-                        "BUY", symbol, thesis, raw_confidence, reasoning,
+                if trigger or thesis.status in {
+                    ThesisStatus.STRENGTHENING,
+                    ThesisStatus.CONFIRMED,
+                }:
+                    result = self._try_generate_signal(
+                        "BUY", symbol, thesis, trigger,
                     )
                     if result:
                         results.append(result)
 
             elif thesis.status in _SELL_STATUSES and symbol in held_symbols:
-                # Potential SELL: thesis is negative and we hold it
-                reasoning = self._build_reasoning("SELL", symbol, thesis, trigger)
-                raw_confidence = self._compute_raw_confidence(thesis, trigger)
-                result = self._generate_signal(
-                    "SELL", symbol, thesis, raw_confidence, reasoning,
+                result = self._try_generate_signal(
+                    "SELL", symbol, thesis, trigger,
                 )
                 if result:
                     results.append(result)
 
         return results
 
-    def _check_price_triggers(self, symbol: str, thesis: Any) -> dict | None:
+    def _try_generate_signal(
+        self,
+        action: str,
+        symbol: str,
+        thesis: Any,
+        trigger: dict | None,
+    ) -> dict | None:
+        """Attempt to generate a signal after checking blocks and scoring.
+
+        Runs all blocking checks, then multi-factor scoring, then risk
+        checks before creating the signal.
+
+        Args:
+            action: "BUY" or "SELL".
+            symbol: Ticker symbol.
+            thesis: Thesis model.
+            trigger: Price trigger dict or None.
+
+        Returns:
+            Dict describing the created signal, or None if blocked.
+        """
+        # Check blocking conditions (skip for SELL — we want to exit)
+        if action == "BUY":
+            block_reason = self._check_blocking_conditions(
+                symbol, thesis,
+            )
+            if block_reason:
+                logger.info(
+                    "signal_scan: %s %s blocked: %s",
+                    action, symbol, block_reason,
+                )
+                return None
+
+        mf_score = self._compute_multi_factor_score(
+            symbol, thesis, trigger,
+        )
+
+        # For SELL signals, use inverse conviction (urgency to exit)
+        if action == "SELL":
+            sell_urgency = 1.0 - mf_score.critic_assessment
+            raw_confidence = max(mf_score.weighted_total, sell_urgency)
+        else:
+            raw_confidence = mf_score.weighted_total
+
+        reasoning = self._build_reasoning(
+            action, symbol, thesis, trigger, mf_score,
+        )
+
+        return self._generate_signal(
+            action, symbol, thesis, raw_confidence, reasoning,
+        )
+
+    def _check_blocking_conditions(
+        self,
+        symbol: str,
+        thesis: Any,
+    ) -> str | None:
+        """Check all blocking conditions for a BUY signal.
+
+        Args:
+            symbol: Ticker symbol.
+            thesis: Thesis model.
+
+        Returns:
+            Block reason string if blocked, None if clear.
+        """
+        # Conviction gate
+        conviction = thesis.conviction if thesis.conviction else 0.0
+        if conviction < _MIN_CONVICTION:
+            return (
+                f"conviction {conviction:.0%} < {_MIN_CONVICTION:.0%}"
+            )
+
+        # Thesis age gate
+        if thesis.created_at:
+            try:
+                created = datetime.fromisoformat(
+                    str(thesis.created_at)
+                )
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=UTC)
+                age = datetime.now(UTC) - created
+                if age < timedelta(days=_MIN_THESIS_AGE_DAYS):
+                    return (
+                        f"thesis age {age.days}d "
+                        f"< {_MIN_THESIS_AGE_DAYS}d minimum"
+                    )
+            except (ValueError, TypeError):
+                pass
+
+        # Think sessions gate
+        session_count = self._get_think_session_count(thesis.id)
+        if session_count < _MIN_THINK_SESSIONS:
+            return (
+                f"only {session_count} /think sessions "
+                f"< {_MIN_THINK_SESSIONS} minimum"
+            )
+
+        # Earnings calendar block
+        if is_earnings_imminent(symbol):
+            return f"{symbol} earnings imminent (within 5 days)"
+
+        # Trading window blackout
+        if self._is_in_trading_blackout(symbol):
+            return f"{symbol} in trading window blackout"
+
+        return None
+
+    def _get_think_session_count(self, thesis_id: int) -> int:
+        """Get the number of /think sessions for a thesis.
+
+        Checks the thoughts.sessions table via the moves DB (the bridge
+        may have synced session counts), or falls back to checking
+        thesis_versions as a proxy.
+
+        Args:
+            thesis_id: Thesis ID.
+
+        Returns:
+            Number of think sessions.
+        """
+        # Try thesis_versions as a proxy for think sessions
+        row = self.db.fetchone(
+            "SELECT COUNT(*) as cnt FROM thesis_versions "
+            "WHERE thesis_id = ?",
+            (thesis_id,),
+        )
+        return row["cnt"] if row else 0
+
+    def _is_in_trading_blackout(self, symbol: str) -> bool:
+        """Check if a symbol is in a trading window blackout.
+
+        Looks at the trading_windows table for windows where the current
+        date falls between opens and closes dates.
+
+        Args:
+            symbol: Ticker symbol.
+
+        Returns:
+            True if the symbol is currently blacked out.
+        """
+        now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        # Check if there's an OPEN window right now
+        open_window = self.db.fetchone(
+            """SELECT id FROM trading_windows
+               WHERE symbol = ?
+                 AND opens IS NOT NULL
+                 AND closes IS NOT NULL
+                 AND ? >= opens AND ? <= closes
+            """,
+            (symbol.upper(), now, now),
+        )
+        # If no open window exists but windows are defined → blacked out
+        has_any_window = self.db.fetchone(
+            "SELECT id FROM trading_windows WHERE symbol = ?",
+            (symbol.upper(),),
+        )
+        if has_any_window and not open_window:
+            return True
+        return False
+
+    def _compute_multi_factor_score(
+        self,
+        symbol: str,
+        thesis: Any,
+        trigger: dict | None,
+    ) -> MultiFactorScore:
+        """Compute the multi-factor confidence score.
+
+        Combines six weighted factors into a single confidence score.
+
+        Args:
+            symbol: Ticker symbol.
+            thesis: Thesis model.
+            trigger: Price trigger dict or None.
+
+        Returns:
+            MultiFactorScore with individual factor scores and total.
+        """
+        # 1. Thesis conviction (0.0–1.0)
+        conviction = thesis.conviction if thesis.conviction else 0.5
+
+        # 2. Watchlist trigger (1.0 if hit, 0.0 if not)
+        watchlist_score = self._check_watchlist_triggers(symbol)
+
+        # 3. News sentiment (0.0–1.0)
+        news_score = self._get_news_sentiment(symbol, thesis)
+
+        # 4. Critic assessment (0.0–1.0)
+        critic_score = self._get_critic_assessment(thesis)
+
+        # 5. Calibration / win rate (0.0–1.0)
+        calibration = self._get_calibration_score()
+
+        # 6. Congress alignment (0.0–1.0)
+        congress_score = self._get_congress_alignment(symbol)
+
+        # Price trigger boost (additive on conviction, up to +0.15)
+        if trigger:
+            abs_move = abs(trigger.get("change_percent", 0))
+            boost = min(abs_move / 20.0, 0.15)
+            conviction = min(conviction + boost, 1.0)
+
+        weighted = (
+            conviction * _WEIGHT_THESIS_CONVICTION
+            + watchlist_score * _WEIGHT_WATCHLIST_TRIGGER
+            + news_score * _WEIGHT_NEWS_SENTIMENT
+            + critic_score * _WEIGHT_CRITIC_ASSESSMENT
+            + calibration * _WEIGHT_CALIBRATION
+            + congress_score * _WEIGHT_CONGRESS_ALIGNMENT
+        )
+
+        return MultiFactorScore(
+            thesis_conviction=conviction,
+            watchlist_trigger=watchlist_score,
+            news_sentiment=news_score,
+            critic_assessment=critic_score,
+            calibration=calibration,
+            congress_alignment=congress_score,
+            weighted_total=round(min(1.0, max(0.0, weighted)), 4),
+        )
+
+    def _check_watchlist_triggers(self, symbol: str) -> float:
+        """Check if any active watchlist triggers have been hit.
+
+        A trigger is considered "hit" if it has a triggered_at timestamp.
+
+        Args:
+            symbol: Ticker symbol.
+
+        Returns:
+            1.0 if any trigger was hit, 0.0 otherwise.
+        """
+        try:
+            row = self.db.fetchone(
+                """SELECT id FROM watchlist_triggers
+                   WHERE symbol = ?
+                     AND active = 1
+                     AND triggered_at IS NOT NULL
+                   LIMIT 1""",
+                (symbol.upper(),),
+            )
+            return 1.0 if row else 0.0
+        except Exception:
+            # Table may not exist yet
+            return 0.0
+
+    def _get_news_sentiment(
+        self, symbol: str, thesis: Any,
+    ) -> float:
+        """Get recent news sentiment score for a symbol's thesis.
+
+        Checks the thesis_news table for articles from the last 7 days
+        and computes a sentiment score based on supporting vs contradicting.
+
+        Args:
+            symbol: Ticker symbol.
+            thesis: Thesis model.
+
+        Returns:
+            Sentiment score 0.0–1.0 (0.5 = neutral).
+        """
+        week_ago = (
+            datetime.now(UTC) - timedelta(days=7)
+        ).strftime("%Y-%m-%d")
+
+        row = self.db.fetchone(
+            """SELECT
+                 SUM(CASE WHEN sentiment = 'supporting' THEN 1 ELSE 0
+                     END) as sup,
+                 SUM(CASE WHEN sentiment = 'contradicting' THEN 1
+                     ELSE 0 END) as con,
+                 COUNT(*) as total
+               FROM thesis_news
+               WHERE thesis_id = ? AND timestamp >= ?""",
+            (thesis.id, week_ago),
+        )
+
+        if not row or not row["total"]:
+            return 0.5  # Neutral if no news
+
+        sup = row["sup"] or 0
+        con = row["con"] or 0
+        total = row["total"]
+
+        # Scale: all supporting = 1.0, all contradicting = 0.0
+        if total == 0:
+            return 0.5
+        return round((sup - con + total) / (2 * total), 4)
+
+    def _get_critic_assessment(self, thesis: Any) -> float:
+        """Get the last critic assessment score for a thesis.
+
+        Looks at thesis_versions for critic-related transitions as a
+        proxy. In the future, this will read from a dedicated critic
+        assessment table.
+
+        Args:
+            thesis: Thesis model.
+
+        Returns:
+            Critic score 0.0–1.0 (0.5 = neutral).
+        """
+        # Use thesis status as a proxy for critic assessment
+        status_scores = {
+            ThesisStatus.CONFIRMED: 0.9,
+            ThesisStatus.STRENGTHENING: 0.75,
+            ThesisStatus.ACTIVE: 0.5,
+            ThesisStatus.WEAKENING: 0.25,
+            ThesisStatus.INVALIDATED: 0.1,
+            ThesisStatus.ARCHIVED: 0.0,
+        }
+        return status_scores.get(thesis.status, 0.5)
+
+    def _get_calibration_score(self) -> float:
+        """Get the calibration score based on historical win rate.
+
+        Reads from signal_scores table for the thesis_update source type.
+
+        Returns:
+            Calibration score 0.0–1.0 (0.5 if no history).
+        """
+        row = self.db.fetchone(
+            """SELECT wins, total FROM signal_scores
+               WHERE source_type = ?""",
+            (SignalSource.THESIS_UPDATE.value,),
+        )
+
+        if not row or not row["total"]:
+            return 0.5  # Neutral if no history
+
+        win_rate = row["wins"] / row["total"]
+        return round(min(1.0, win_rate), 4)
+
+    def _get_congress_alignment(self, symbol: str) -> float:
+        """Get congress trade alignment score for a symbol.
+
+        Checks recent congress trades (last 90 days) for the symbol.
+        More buys from high-tier politicians = higher score.
+
+        Args:
+            symbol: Ticker symbol.
+
+        Returns:
+            Congress alignment score 0.0–1.0 (0.5 if no data).
+        """
+        ninety_days_ago = (
+            datetime.now(UTC) - timedelta(days=90)
+        ).strftime("%Y-%m-%d")
+
+        rows = self.db.fetchall(
+            """SELECT ct.action, ps.score as pol_score
+               FROM congress_trades ct
+               LEFT JOIN politician_scores ps
+                 ON ct.politician = ps.politician
+               WHERE ct.symbol = ?
+                 AND ct.date_traded >= ?""",
+            (symbol.upper(), ninety_days_ago),
+        )
+
+        if not rows:
+            return 0.5  # Neutral
+
+        buy_signal = 0.0
+        total_weight = 0.0
+        for row in rows:
+            pol_score = (row["pol_score"] or 50) / 100.0
+            if row["action"] == "buy":
+                buy_signal += pol_score
+            else:
+                buy_signal -= pol_score * 0.5
+            total_weight += pol_score
+
+        if total_weight == 0:
+            return 0.5
+
+        # Normalize to 0.0–1.0
+        raw = 0.5 + (buy_signal / total_weight) * 0.5
+        return round(min(1.0, max(0.0, raw)), 4)
+
+    def _check_price_triggers(
+        self, symbol: str, thesis: Any,
+    ) -> dict | None:
         """Check if price has hit significant movement thresholds.
 
         Args:
@@ -178,12 +614,14 @@ class SignalGenerator:
             thesis: Thesis model (for context).
 
         Returns:
-            Dict with trigger info if significant move detected, None otherwise.
+            Dict with trigger info if significant move, None otherwise.
         """
         try:
             price_data = self.pricing.get_price(symbol, db=self.db)
         except Exception:
-            logger.warning("signal_scan: price fetch failed for %s", symbol)
+            logger.warning(
+                "signal_scan: price fetch failed for %s", symbol,
+            )
             return None
 
         if "error" in price_data or not price_data.get("price"):
@@ -203,19 +641,24 @@ class SignalGenerator:
                 "direction": "up" if change_pct > 0 else "down",
             }
 
-        # Check weekly move via history
         try:
-            history = self.pricing.get_history(symbol, period="5d", db=self.db)
+            history = self.pricing.get_history(
+                symbol, period="5d", db=self.db,
+            )
             if history and len(history) >= 2:
                 start_price = history[0]["close"]
                 end_price = history[-1]["close"]
-                weekly_change = ((end_price - start_price) / start_price) * 100
+                weekly_change = (
+                    (end_price - start_price) / start_price
+                ) * 100
                 if abs(weekly_change) >= _WEEKLY_MOVE_THRESHOLD:
                     return {
                         "type": "weekly_move",
                         "price": price_data["price"],
                         "change_percent": round(weekly_change, 2),
-                        "direction": "up" if weekly_change > 0 else "down",
+                        "direction": (
+                            "up" if weekly_change > 0 else "down"
+                        ),
                     }
         except Exception:
             pass
@@ -230,26 +673,24 @@ class SignalGenerator:
         raw_confidence: float,
         reasoning: str,
     ) -> dict | None:
-        """Create a signal through the signal engine after scoring and risk check.
+        """Create a signal after scoring and risk check.
 
         Args:
             action: "BUY" or "SELL".
             symbol: Ticker symbol.
             thesis: Thesis model.
-            raw_confidence: Unscored confidence 0.0–1.0.
+            raw_confidence: Multi-factor confidence 0.0–1.0.
             reasoning: Human-readable reasoning string.
 
         Returns:
             Dict describing the created signal, or None if blocked.
         """
-        # Score confidence through the full pipeline
         confidence = self.signal_engine.score_confidence(
             raw_confidence=raw_confidence,
             thesis_status=thesis.status.value,
             source_type=SignalSource.THESIS_UPDATE.value,
         )
 
-        # Skip very low confidence signals
         if confidence < 0.3:
             logger.debug(
                 "signal_scan: skipping %s %s — confidence %.2f too low",
@@ -257,11 +698,14 @@ class SignalGenerator:
             )
             return None
 
-        # Compute position size
         nav = self.risk_manager._get_nav()
-        size_pct = self._compute_position_size(symbol, confidence, nav)
+        size_pct = self._compute_position_size(
+            symbol, confidence, nav,
+        )
 
-        signal_action = SignalAction.BUY if action == "BUY" else SignalAction.SELL
+        signal_action = (
+            SignalAction.BUY if action == "BUY" else SignalAction.SELL
+        )
 
         signal = Signal(
             action=signal_action,
@@ -275,7 +719,6 @@ class SignalGenerator:
             status=SignalStatus.PENDING,
         )
 
-        # Run pre-trade risk check
         risk_result = self.risk_manager.pre_trade_check(signal)
         if not risk_result:
             logger.info(
@@ -284,10 +727,10 @@ class SignalGenerator:
             )
             return None
 
-        # Create the signal
         created = self.signal_engine.create_signal(signal)
         logger.info(
-            "signal_scan: created %s signal for %s (confidence=%.2f, thesis=%d)",
+            "signal_scan: created %s signal for %s "
+            "(confidence=%.2f, thesis=%d)",
             action, symbol, confidence, thesis.id,
         )
         return {
@@ -301,34 +744,37 @@ class SignalGenerator:
         }
 
     def _compute_position_size(
-        self, symbol: str, confidence: float, nav: float
+        self, symbol: str, confidence: float, nav: float,
     ) -> float:
         """Compute suggested position size as fraction of NAV.
 
-        Base: 2% of NAV.
-        Scale by confidence: size = base * confidence * 2.
+        Base: 2% of NAV. Scale by confidence: size = base * confidence * 2.
         Cap at max_position_pct from risk limits.
 
         Args:
-            symbol: Ticker symbol (for future per-symbol adjustments).
+            symbol: Ticker symbol.
             confidence: Scored confidence 0.0–1.0.
             nav: Current portfolio NAV.
 
         Returns:
-            Position size as fraction of NAV (e.g., 0.03 = 3%).
+            Position size as fraction of NAV.
         """
         if nav <= 0:
             return _BASE_POSITION_SIZE
 
         size = _BASE_POSITION_SIZE * confidence * 2
-        # Cap at risk limit
         max_pct = self.risk_manager._get_limit(
-            "max_position_pct", 0.15
+            "max_position_pct", 0.15,
         )
         return min(size, max_pct)
 
-    def _compute_raw_confidence(self, thesis: Any, trigger: dict | None) -> float:
+    def _compute_raw_confidence(
+        self, thesis: Any, trigger: dict | None,
+    ) -> float:
         """Compute raw (pre-scoring) confidence based on thesis and trigger.
+
+        Deprecated: use _compute_multi_factor_score instead. Kept for
+        backward compatibility.
 
         Args:
             thesis: Thesis model.
@@ -337,20 +783,20 @@ class SignalGenerator:
         Returns:
             Raw confidence 0.0–1.0.
         """
-        # Start with thesis conviction
         base = thesis.conviction if thesis.conviction else 0.5
-
-        # Boost if there's a price trigger
         if trigger:
             abs_move = abs(trigger.get("change_percent", 0))
-            # Bigger moves = more confidence (up to +0.15)
             trigger_boost = min(abs_move / 20.0, 0.15)
             base = min(base + trigger_boost, 1.0)
-
         return base
 
     def _build_reasoning(
-        self, action: str, symbol: str, thesis: Any, trigger: dict | None
+        self,
+        action: str,
+        symbol: str,
+        thesis: Any,
+        trigger: dict | None,
+        mf_score: MultiFactorScore | None = None,
     ) -> str:
         """Build human-readable reasoning for a signal.
 
@@ -359,21 +805,43 @@ class SignalGenerator:
             symbol: Ticker symbol.
             thesis: Thesis model.
             trigger: Price trigger dict or None.
+            mf_score: Multi-factor score breakdown, if available.
 
         Returns:
             Reasoning string.
         """
-        parts = [f"Thesis '{thesis.title}' ({thesis.status.value})"]
+        parts = [
+            f"Thesis '{thesis.title}' ({thesis.status.value})",
+        ]
 
         if action == "BUY":
             parts.append(f"{symbol} not yet in portfolio")
         else:
-            parts.append(f"{symbol} held — thesis {thesis.status.value}")
+            parts.append(
+                f"{symbol} held — thesis {thesis.status.value}",
+            )
 
         if trigger:
             parts.append(
-                f"Price {trigger['direction']} {abs(trigger['change_percent']):.1f}% "
+                f"Price {trigger['direction']} "
+                f"{abs(trigger['change_percent']):.1f}% "
                 f"({trigger['type']})"
+            )
+
+        if mf_score:
+            factors = []
+            if mf_score.watchlist_trigger > 0:
+                factors.append("watchlist trigger hit")
+            if mf_score.news_sentiment > 0.6:
+                factors.append("positive news sentiment")
+            elif mf_score.news_sentiment < 0.4:
+                factors.append("negative news sentiment")
+            if mf_score.congress_alignment > 0.6:
+                factors.append("congress buying aligned")
+            if factors:
+                parts.append("Factors: " + ", ".join(factors))
+            parts.append(
+                f"Multi-factor score: {mf_score.weighted_total:.2f}"
             )
 
         return ". ".join(parts) + "."
@@ -385,7 +853,7 @@ class SignalGenerator:
             Set of symbol strings with open positions.
         """
         rows = self.db.fetchall(
-            "SELECT DISTINCT symbol FROM positions WHERE shares > 0"
+            "SELECT DISTINCT symbol FROM positions WHERE shares > 0",
         )
         return {r["symbol"] for r in rows}
 
@@ -393,7 +861,7 @@ class SignalGenerator:
         """Get set of symbols with pending signals.
 
         Returns:
-            Set of symbol strings that already have a pending signal.
+            Set of symbol strings with a pending signal.
         """
         rows = self.db.fetchall(
             "SELECT DISTINCT symbol FROM signals WHERE status = ?",

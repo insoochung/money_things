@@ -1,28 +1,35 @@
-"""Tests for the signal generation pipeline."""
+"""Tests for the signal generation pipeline with multi-factor scoring."""
 
 from __future__ import annotations
 
+import json
+import tempfile
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 
 from engine import SignalStatus, ThesisStatus
+from engine.earnings_calendar import is_earnings_imminent
 from engine.risk import RiskManager
-from engine.signal_generator import _BASE_POSITION_SIZE, SignalGenerator
+from engine.signal_generator import (
+    _BASE_POSITION_SIZE,
+    _MIN_THINK_SESSIONS,
+    MultiFactorScore,
+    SignalGenerator,
+)
 from engine.signals import SignalEngine
 from engine.thesis import ThesisEngine
 
 
-@pytest.fixture
-def generator(seeded_db):
-    """Create a SignalGenerator with mock pricing."""
-    # Build a fake pricing module
-    pricing = SimpleNamespace(
+def _make_pricing(change_pct: float = 2.4, price: float = 150.0):
+    """Create a fake pricing module with configurable values."""
+    return SimpleNamespace(
         get_price=lambda symbol, db=None: {
             "symbol": symbol,
-            "price": 150.0,
-            "change": 3.5,
-            "change_percent": 2.4,
+            "price": price,
+            "change": price * change_pct / 100,
+            "change_percent": change_pct,
             "volume": 1000000,
             "timestamp": "2026-02-08T12:00:00",
             "source": "yfinance",
@@ -35,27 +42,54 @@ def generator(seeded_db):
         ],
     )
 
-    se = SignalEngine(db=seeded_db)
-    te = ThesisEngine(db=seeded_db)
-    rm = RiskManager(db=seeded_db)
 
+def _make_generator(db, pricing=None):
+    """Create a SignalGenerator with optional custom pricing."""
     return SignalGenerator(
-        db=seeded_db,
-        signal_engine=se,
-        thesis_engine=te,
-        risk_manager=rm,
-        pricing=pricing,
+        db=db,
+        signal_engine=SignalEngine(db=db),
+        thesis_engine=ThesisEngine(db=db),
+        risk_manager=RiskManager(db=db),
+        pricing=pricing or _make_pricing(),
     )
 
 
-def test_run_scan_generates_buy_for_unheld_symbols(generator):
-    """Active thesis with unheld symbols should generate BUY signals when triggered."""
-    # The seeded thesis has NVDA and AVGO with status='active'.
-    # Mock pricing returns 2.4% daily change (above 2% threshold).
-    # Neither NVDA nor AVGO are held.
-    results = generator.run_scan()
+def _seed_mature_thesis(db, conviction=0.8, days_old=14):
+    """Seed a thesis that passes maturity gates.
 
-    # Should generate BUY signals for symbols with price triggers
+    Updates the seeded thesis to be old enough and have enough versions.
+    """
+    created = (
+        datetime.now(UTC) - timedelta(days=days_old)
+    ).strftime("%Y-%m-%d %H:%M:%S")
+    db.execute(
+        "UPDATE theses SET created_at = ?, conviction = ? WHERE id = 1",
+        (created, conviction),
+    )
+    # Add thesis_versions to simulate /think sessions
+    for i in range(_MIN_THINK_SESSIONS):
+        db.execute(
+            """INSERT INTO thesis_versions
+               (thesis_id, new_status, reason)
+               VALUES (1, 'active', ?)""",
+            (f"Think session {i + 1}",),
+        )
+    db.connect().commit()
+
+
+@pytest.fixture
+def generator(seeded_db):
+    """Create a SignalGenerator with a mature thesis and mock pricing."""
+    _seed_mature_thesis(seeded_db)
+    return _make_generator(seeded_db)
+
+
+# --- Basic signal generation ---
+
+
+def test_run_scan_generates_buy_for_unheld_symbols(generator):
+    """Active thesis with unheld symbols generates BUY signals."""
+    results = generator.run_scan()
     assert len(results) >= 1
     for r in results:
         assert r["action"] == "BUY"
@@ -66,45 +100,25 @@ def test_run_scan_generates_buy_for_unheld_symbols(generator):
 
 def test_run_scan_no_duplicates(generator):
     """Should not create duplicate signals for symbols with pending signals."""
-    # First scan creates signals
     first = generator.run_scan()
     assert len(first) >= 1
-
-    # Second scan should skip them (pending signals exist)
     second = generator.run_scan()
     assert len(second) == 0
 
 
 def test_run_scan_generates_sell_for_weakening_thesis(seeded_db):
-    """Weakening thesis should generate SELL signals for held positions."""
-    # Transition thesis to weakening
+    """Weakening thesis generates SELL signals for held positions."""
+    _seed_mature_thesis(seeded_db)
     te = ThesisEngine(db=seeded_db)
-    te.transition_status(1, ThesisStatus.WEAKENING, reason="Test weakening")
+    te.transition_status(1, ThesisStatus.WEAKENING, reason="Test")
 
-    # Add a position for NVDA
     seeded_db.execute(
         """INSERT INTO positions (symbol, shares, avg_cost, side)
-           VALUES ('NVDA', 10, 140.0, 'long')"""
+           VALUES ('NVDA', 10, 140.0, 'long')""",
     )
     seeded_db.connect().commit()
 
-    pricing = SimpleNamespace(
-        get_price=lambda symbol, db=None: {
-            "symbol": symbol, "price": 150.0, "change": 0.5,
-            "change_percent": 0.3, "volume": 1000000,
-            "timestamp": "2026-02-08T12:00:00", "source": "yfinance",
-        },
-        get_history=lambda symbol, period="5d", db=None: [],
-    )
-
-    sg = SignalGenerator(
-        db=seeded_db,
-        signal_engine=SignalEngine(db=seeded_db),
-        thesis_engine=te,
-        risk_manager=RiskManager(db=seeded_db),
-        pricing=pricing,
-    )
-
+    sg = _make_generator(seeded_db, _make_pricing(0.3))
     results = sg.run_scan()
     sells = [r for r in results if r["action"] == "SELL"]
     assert len(sells) >= 1
@@ -112,50 +126,33 @@ def test_run_scan_generates_sell_for_weakening_thesis(seeded_db):
 
 
 def test_run_scan_skips_archived_theses(seeded_db):
-    """Archived theses should generate no signals."""
+    """Archived theses generate no signals."""
+    _seed_mature_thesis(seeded_db)
     te = ThesisEngine(db=seeded_db)
     te.transition_status(1, ThesisStatus.ARCHIVED, reason="Done")
 
-    pricing = SimpleNamespace(
-        get_price=lambda symbol, db=None: {"symbol": symbol, "price": 150.0,
-            "change_percent": 5.0, "change": 7.5, "volume": 1000000,
-            "timestamp": "now", "source": "yfinance"},
-        get_history=lambda symbol, period="5d", db=None: [],
-    )
-
-    sg = SignalGenerator(
-        db=seeded_db,
-        signal_engine=SignalEngine(db=seeded_db),
-        thesis_engine=te,
-        risk_manager=RiskManager(db=seeded_db),
-        pricing=pricing,
-    )
-
+    sg = _make_generator(seeded_db, _make_pricing(5.0))
     results = sg.run_scan()
     assert len(results) == 0
 
 
 def test_compute_position_size(generator):
-    """Position size should scale with confidence and cap at max."""
-    # NAV is 100000, max_position_pct is 0.15
+    """Position size scales with confidence and caps at max."""
     size = generator._compute_position_size("NVDA", 0.5, 100000)
-    expected = _BASE_POSITION_SIZE * 0.5 * 2  # 0.02
+    expected = _BASE_POSITION_SIZE * 0.5 * 2
     assert size == pytest.approx(expected)
 
-    # High confidence should cap at max_position_pct
     size_high = generator._compute_position_size("NVDA", 1.0, 100000)
-    assert size_high == pytest.approx(_BASE_POSITION_SIZE * 1.0 * 2)  # 0.04
+    assert size_high == pytest.approx(_BASE_POSITION_SIZE * 1.0 * 2)
 
-    # Zero NAV
     size_zero = generator._compute_position_size("NVDA", 0.5, 0)
     assert size_zero == _BASE_POSITION_SIZE
 
 
 def test_signals_persisted_to_db(generator, seeded_db):
-    """Generated signals should be persisted in the database."""
+    """Generated signals are persisted in the database."""
     results = generator.run_scan()
     assert len(results) >= 1
-
     for r in results:
         signal = generator.signal_engine.get_signal(r["signal_id"])
         assert signal is not None
@@ -164,28 +161,260 @@ def test_signals_persisted_to_db(generator, seeded_db):
 
 
 def test_no_signal_below_confidence_threshold(seeded_db):
-    """Signals with very low scored confidence should be skipped."""
-    # Invalidated thesis has 0.0x multiplier -> confidence becomes 0
+    """Very low scored confidence signals are skipped."""
+    _seed_mature_thesis(seeded_db)
     te = ThesisEngine(db=seeded_db)
-    # Can't go directly to invalidated from active, go through weakening first
     te.transition_status(1, ThesisStatus.WEAKENING, reason="weak")
-    te.transition_status(1, ThesisStatus.INVALIDATED, reason="invalid")
-
-    pricing = SimpleNamespace(
-        get_price=lambda symbol, db=None: {"symbol": symbol, "price": 150.0,
-            "change_percent": 3.0, "change": 4.5, "volume": 1000000,
-            "timestamp": "now", "source": "yfinance"},
-        get_history=lambda symbol, period="5d", db=None: [],
+    te.transition_status(
+        1, ThesisStatus.INVALIDATED, reason="invalid",
     )
 
-    sg = SignalGenerator(
-        db=seeded_db,
-        signal_engine=SignalEngine(db=seeded_db),
-        thesis_engine=te,
-        risk_manager=RiskManager(db=seeded_db),
-        pricing=pricing,
-    )
-
+    sg = _make_generator(seeded_db, _make_pricing(3.0))
     results = sg.run_scan()
-    # Invalidated thesis: 0.0x multiplier -> confidence 0 -> skip
     assert len(results) == 0
+
+
+# --- Multi-factor scoring ---
+
+
+def test_multi_factor_score_all_neutral(seeded_db):
+    """Neutral factors produce a moderate weighted score."""
+    _seed_mature_thesis(seeded_db)
+    sg = _make_generator(seeded_db)
+    thesis = sg.thesis_engine.get_thesis(1)
+    score = sg._compute_multi_factor_score("NVDA", thesis, None)
+    assert isinstance(score, MultiFactorScore)
+    assert 0.0 < score.weighted_total < 1.0
+    assert score.thesis_conviction == 0.8
+
+
+def test_multi_factor_score_with_watchlist_trigger(seeded_db):
+    """Watchlist trigger hit boosts the score."""
+    _seed_mature_thesis(seeded_db)
+    # Create the watchlist_triggers table
+    seeded_db.execute(
+        """CREATE TABLE IF NOT EXISTS watchlist_triggers (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               thesis_id INTEGER,
+               symbol TEXT NOT NULL,
+               trigger_type TEXT NOT NULL,
+               condition TEXT NOT NULL,
+               target_value REAL NOT NULL,
+               active INTEGER DEFAULT 1,
+               created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+               triggered_at TEXT
+           )""",
+    )
+    seeded_db.execute(
+        """INSERT INTO watchlist_triggers
+           (thesis_id, symbol, trigger_type, condition,
+            target_value, active, triggered_at)
+           VALUES (1, 'NVDA', 'entry', 'price_below', 145.0,
+                   1, '2026-02-08')""",
+    )
+    seeded_db.connect().commit()
+
+    sg = _make_generator(seeded_db)
+    thesis = sg.thesis_engine.get_thesis(1)
+    score = sg._compute_multi_factor_score("NVDA", thesis, None)
+    assert score.watchlist_trigger == 1.0
+
+    # Score without trigger for comparison
+    score_no = sg._compute_multi_factor_score("AVGO", thesis, None)
+    assert score_no.watchlist_trigger == 0.0
+    assert score.weighted_total > score_no.weighted_total
+
+
+def test_multi_factor_score_with_news_sentiment(seeded_db):
+    """News sentiment affects the score."""
+    _seed_mature_thesis(seeded_db)
+    # Insert supporting news
+    for i in range(3):
+        seeded_db.execute(
+            """INSERT INTO thesis_news
+               (thesis_id, headline, sentiment, timestamp)
+               VALUES (1, ?, 'supporting', datetime('now'))""",
+            (f"Good news {i}",),
+        )
+    seeded_db.connect().commit()
+
+    sg = _make_generator(seeded_db)
+    thesis = sg.thesis_engine.get_thesis(1)
+    score = sg._compute_multi_factor_score("NVDA", thesis, None)
+    assert score.news_sentiment > 0.5
+
+
+def test_multi_factor_score_congress_alignment(seeded_db):
+    """Congress trades affect the alignment score."""
+    _seed_mature_thesis(seeded_db)
+    seeded_db.execute(
+        """INSERT INTO congress_trades
+           (politician, symbol, action, date_traded)
+           VALUES ('Test Senator', 'NVDA', 'buy', date('now'))""",
+    )
+    seeded_db.execute(
+        """INSERT INTO politician_scores
+           (politician, score, tier)
+           VALUES ('Test Senator', 85, 'whale')""",
+    )
+    seeded_db.connect().commit()
+
+    sg = _make_generator(seeded_db)
+    thesis = sg.thesis_engine.get_thesis(1)
+    score = sg._compute_multi_factor_score("NVDA", thesis, None)
+    assert score.congress_alignment > 0.5
+
+
+# --- Blocking conditions ---
+
+
+def test_blocks_low_conviction(seeded_db):
+    """Signals blocked when conviction < 70%."""
+    _seed_mature_thesis(seeded_db, conviction=0.5)
+    sg = _make_generator(seeded_db)
+    results = sg.run_scan()
+    assert len(results) == 0
+
+
+def test_blocks_young_thesis(seeded_db):
+    """Signals blocked when thesis < 1 week old."""
+    _seed_mature_thesis(seeded_db, days_old=3)
+    sg = _make_generator(seeded_db)
+    results = sg.run_scan()
+    assert len(results) == 0
+
+
+def test_blocks_insufficient_think_sessions(seeded_db):
+    """Signals blocked when < 2 /think sessions."""
+    created = (
+        datetime.now(UTC) - timedelta(days=14)
+    ).strftime("%Y-%m-%d %H:%M:%S")
+    seeded_db.execute(
+        "UPDATE theses SET created_at = ?, conviction = 0.8 WHERE id = 1",
+        (created,),
+    )
+    seeded_db.connect().commit()
+    # No thesis_versions inserted → 0 sessions
+
+    sg = _make_generator(seeded_db)
+    results = sg.run_scan()
+    assert len(results) == 0
+
+
+def test_blocks_earnings_imminent(seeded_db):
+    """Signals blocked when earnings are within 5 days."""
+    _seed_mature_thesis(seeded_db)
+
+    # Create a temp earnings calendar
+    tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False,
+    ) as f:
+        json.dump({"NVDA": [tomorrow]}, f)
+        config_path = f.name
+
+    assert is_earnings_imminent("NVDA", config_path=config_path)
+    assert not is_earnings_imminent("AVGO", config_path=config_path)
+
+
+def test_blocks_trading_window_blackout(seeded_db):
+    """Signals blocked when symbol is in trading window blackout."""
+    _seed_mature_thesis(seeded_db)
+
+    # Set up a past trading window (not currently open)
+    seeded_db.execute(
+        """INSERT INTO trading_windows (symbol, opens, closes, notes)
+           VALUES ('NVDA', '2025-01-01', '2025-01-15', 'Past window')""",
+    )
+    seeded_db.connect().commit()
+
+    sg = _make_generator(seeded_db)
+    # NVDA has a window defined but it's not open → blacked out
+    assert sg._is_in_trading_blackout("NVDA") is True
+    # AVGO has no windows → not blacked out
+    assert sg._is_in_trading_blackout("AVGO") is False
+
+
+def test_sell_signals_bypass_blocking(seeded_db):
+    """SELL signals are not blocked by maturity gates."""
+    # Young thesis, low conviction — but weakening with held position
+    _seed_mature_thesis(seeded_db, conviction=0.5, days_old=3)
+    te = ThesisEngine(db=seeded_db)
+    te.transition_status(1, ThesisStatus.WEAKENING, reason="Test")
+
+    seeded_db.execute(
+        """INSERT INTO positions (symbol, shares, avg_cost, side)
+           VALUES ('NVDA', 10, 140.0, 'long')""",
+    )
+    seeded_db.connect().commit()
+
+    sg = _make_generator(seeded_db, _make_pricing(0.3))
+    results = sg.run_scan()
+    sells = [r for r in results if r["action"] == "SELL"]
+    assert len(sells) >= 1
+
+
+# --- Earnings calendar module ---
+
+
+def test_earnings_imminent_no_config():
+    """No config file → not imminent."""
+    assert not is_earnings_imminent(
+        "AAPL", config_path="/nonexistent.json",
+    )
+
+
+def test_earnings_imminent_within_window():
+    """Earnings within window → imminent."""
+    tomorrow = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False,
+    ) as f:
+        json.dump({"AAPL": [tomorrow]}, f)
+        path = f.name
+
+    assert is_earnings_imminent("AAPL", config_path=path)
+
+
+def test_earnings_not_imminent_outside_window():
+    """Earnings > 5 days away → not imminent."""
+    future = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False,
+    ) as f:
+        json.dump({"AAPL": [future]}, f)
+        path = f.name
+
+    assert not is_earnings_imminent("AAPL", config_path=path)
+
+
+# --- Reasoning ---
+
+
+def test_build_reasoning_includes_factors(seeded_db):
+    """Reasoning string includes multi-factor details."""
+    _seed_mature_thesis(seeded_db)
+    sg = _make_generator(seeded_db)
+    thesis = sg.thesis_engine.get_thesis(1)
+
+    mf = MultiFactorScore(
+        thesis_conviction=0.8,
+        watchlist_trigger=1.0,
+        news_sentiment=0.7,
+        congress_alignment=0.8,
+        weighted_total=0.72,
+    )
+    trigger = {
+        "type": "daily_move",
+        "price": 150.0,
+        "change_percent": 3.5,
+        "direction": "up",
+    }
+
+    reasoning = sg._build_reasoning(
+        "BUY", "NVDA", thesis, trigger, mf,
+    )
+    assert "watchlist trigger hit" in reasoning
+    assert "positive news sentiment" in reasoning
+    assert "congress buying aligned" in reasoning
+    assert "0.72" in reasoning
