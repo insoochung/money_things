@@ -734,12 +734,16 @@
       $('#congress-body').innerHTML = trades.map(t => {
         const ticker = t.ticker || t.symbol;
         const overlap = myTickers.has(ticker);
+        const traded = t.date_traded || t.date || '';
+        const filed = t.date_filed || t.filed_date || '';
+        const lagDays = traded && filed ? Math.round((new Date(filed) - new Date(traded)) / 86400000) : null;
+        const lagLabel = lagDays != null ? `<span class="badge badge-muted" title="Disclosed ${lagDays}d after trade">📅 ${lagDays}d lag</span>` : '';
         return `<tr class="${overlap ? 'overlap' : ''}">
           <td>${t.member || t.representative || t.politician}</td>
           <td><strong>${ticker}</strong></td>
           <td>${t.action || t.type}</td>
-          <td class="hide-tablet">${t.amount || '—'}</td>
-          <td>${t.date || t.filed_date || '—'}</td>
+          <td class="hide-tablet">${t.amount || t.amount_range || '—'}</td>
+          <td>${traded || filed || '—'} ${lagLabel}</td>
           <td>${overlap ? '⚠️' : ''}</td>
         </tr>`;
       }).join('');
