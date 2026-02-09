@@ -419,7 +419,19 @@ class SchwabBroker(Broker):
         """
         import asyncio
 
-        schwab_positions = asyncio.get_event_loop().run_until_complete(self.get_positions())
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                schwab_positions = pool.submit(
+                    asyncio.run, self.get_positions()
+                ).result()
+        else:
+            schwab_positions = asyncio.run(self.get_positions())
 
         db_rows = self.db.fetch_all(
             "SELECT symbol, shares, avg_cost FROM positions WHERE shares > 0"

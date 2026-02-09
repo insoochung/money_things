@@ -51,7 +51,7 @@ class Scheduler:
         """
         self.db = db
         self.engines = engines or {}
-        self._scheduler = BackgroundScheduler()
+        self._scheduler = BackgroundScheduler(daemon=True)
         self._jobs: dict[str, dict[str, Any]] = {}
 
     def start(self) -> None:
