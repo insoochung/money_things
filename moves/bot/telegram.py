@@ -12,7 +12,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from broker.base import Broker
 from config.settings import Mode
@@ -145,25 +145,23 @@ class MoneyMovesBot:
         self.app: Application | None = None
 
     async def start(self) -> None:
-        """Build the application and send startup message.
-
-        Does NOT poll for updates — OpenClaw's bot handles incoming
-        Telegram messages.  This bot instance is kept alive solely for
-        *sending* messages (signal notifications, inline-button edits).
-        """
-        self.app = (
-            Application.builder()
-            .token(self.token)
-            .updater(None)          # no updater ⇒ no polling
-            .build()
-        )
-
-        # Register callback handler so inline-button presses still work
-        # when delivered via webhook / manual dispatch.
+        """Build the application, register handlers, and send startup message."""
+        self.app = Application.builder().token(self.token).build()
+        self.app.add_handler(CommandHandler("start", self.cmd_help))
+        self.app.add_handler(CommandHandler("help", self.cmd_help))
+        self.app.add_handler(CommandHandler("status", self.cmd_status))
+        self.app.add_handler(CommandHandler("positions", self.cmd_positions))
+        self.app.add_handler(CommandHandler("killswitch", self.cmd_killswitch))
+        self.app.add_handler(CommandHandler("mode", self.cmd_mode))
+        self.app.add_handler(CommandHandler("think", self.cmd_think))
+        self.app.add_handler(CommandHandler("note", self.cmd_note))
+        self.app.add_handler(CommandHandler("journal", self.cmd_journal))
+        self.app.add_handler(CommandHandler("brief", self.cmd_brief))
         self.app.add_handler(CallbackQueryHandler(self._handle_callback))
 
         await self.app.initialize()
         await self.app.start()
+        await self.app.updater.start_polling(drop_pending_updates=True)
 
         mode_label = "Mock" if self.mode == Mode.MOCK else "Live"
         await self.app.bot.send_message(
@@ -172,8 +170,9 @@ class MoneyMovesBot:
         )
 
     async def stop(self) -> None:
-        """Gracefully stop the bot (no updater to tear down)."""
+        """Gracefully stop the bot."""
         if self.app:
+            await self.app.updater.stop()
             await self.app.stop()
             await self.app.shutdown()
 
