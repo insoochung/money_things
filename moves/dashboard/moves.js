@@ -604,6 +604,16 @@
       $$('.signal-reasoning').forEach(el => {
         el.addEventListener('click', () => { el.classList.toggle('truncated'); el.classList.toggle('expanded'); });
       });
+
+      // Wire up narrative expand/collapse
+      $$('.signal-expand-toggle').forEach(el => {
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const open = el.getAttribute('aria-expanded') === 'true';
+          el.setAttribute('aria-expanded', !open);
+          el.textContent = open ? 'More ▾' : 'Less ▴';
+        });
+      });
     } catch (e) {
       $('#signals-container').innerHTML = errorHTML('Failed to load signals', loadSignals);
     }
@@ -675,7 +685,6 @@
         <span class="badge badge-muted">${s.source || 'unknown'}</span>
         ${isPending ? `<span class="status-badge pending">Pending</span>` : `<span class="status-badge ${s.status}">${s.status}</span>`}
       </div>
-      <p class="signal-narrative">${narrative}</p>
       ${s.reasoning ? `<div class="signal-reasoning truncated">${s.reasoning}</div>` : ''}
       <div class="signal-meta">
         ${s.thesis_title ? `<span>📋 ${s.thesis_title}</span>` : ''}
@@ -684,6 +693,9 @@
         <span>${relTime(s.created_at)}</span>
         ${s.decided_at ? `<span>Decided ${relTime(s.decided_at)}</span>` : ''}
       </div>
+      <div class="signal-expand-toggle" onclick="this.style.display='none';this.nextElementSibling.classList.add('open');this.nextElementSibling.nextElementSibling.classList.add('open')">More ▾</div>
+      <div class="signal-narrative-wrap"><p class="signal-narrative">${narrative}</p></div>
+      <div class="signal-collapse-toggle" onclick="this.classList.remove('open');this.previousElementSibling.classList.remove('open');this.previousElementSibling.previousElementSibling.style.display=''">Less ▴</div>
       ${isPending ? `<div class="signal-actions"><button class="approve-btn" data-id="${s.id}">✓ Approve</button><button class="reject-btn" data-id="${s.id}">✗ Reject</button></div>` : ''}
     </div>`;
   }
@@ -751,7 +763,8 @@
           <span class="ps-stat">✓ ${summary.total_validated ?? 0} · ✗ ${summary.total_invalidated ?? 0}</span>
           ${discoveries.length ? `<span class="ps-discovery-badge">${discoveries.length} pattern${discoveries.length > 1 ? 's' : ''} discovered</span>` : ''}
           ${summary.last_check ? `<span class="ps-stat">Checked ${relTime(summary.last_check)}</span>` : ''}
-          <p class="principle-narrative summary-narrative">${summaryNarrative}</p>
+          <span class="ps-expand-toggle" aria-expanded="false">▾</span>
+          <p class="principle-summary-narrative">${summaryNarrative}</p>
         `;
       } else {
         summaryEl.innerHTML = '';
@@ -803,8 +816,8 @@
               </div>
               ${origin ? `<span class="origin-badge">${origin}</span>` : ''}
             </div>
-            <p class="principle-narrative">${pNarrative}</p>
             <div class="principle-details">
+              <p class="principle-narrative">${pNarrative}</p>
               <div class="pd-grid">
                 <div class="pd-item"><label>Validated</label><span>${val}</span></div>
                 <div class="pd-item"><label>Invalidated</label><span>${inv}</span></div>
@@ -833,6 +846,16 @@
         </div>`;
       } else {
         discEl.innerHTML = '';
+      }
+
+      // Wire up summary expand toggle
+      const psToggle = $('.ps-expand-toggle');
+      if (psToggle) {
+        psToggle.addEventListener('click', () => {
+          const open = psToggle.getAttribute('aria-expanded') === 'true';
+          psToggle.setAttribute('aria-expanded', !open);
+          psToggle.textContent = open ? '▾' : '▴';
+        });
       }
     } catch (e) {
       $('#principles-list').innerHTML = errorHTML('Failed to load principles', loadPrinciples);
