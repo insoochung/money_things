@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -412,6 +412,14 @@ def create_app() -> FastAPI:
         app.mount(
             "/dashboard", StaticFiles(directory=str(dashboard_dir), html=True), name="dashboard"
         )
+
+        @app.middleware("http")
+        async def no_cache_dashboard(request: Request, call_next):  # type: ignore[misc]
+            """Prevent browser caching of dashboard assets during development."""
+            response = await call_next(request)
+            if request.url.path.startswith("/dashboard/"):
+                response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            return response
 
         @app.get("/", response_class=HTMLResponse)
         async def dashboard() -> HTMLResponse:

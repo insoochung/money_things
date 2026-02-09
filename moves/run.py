@@ -13,9 +13,10 @@ from __future__ import annotations
 import os
 import sys
 
-# Disable testing mode — auth is live (Google OAuth)
-# To re-enable for local dev: MOVES_TESTING=1 python3 run.py
+# Mock mode (mock DB + mock broker) with real auth (Google OAuth).
+# MOVES_MODE=mock controls data; MOVES_TESTING bypasses auth (don't want that).
 os.environ.pop("MOVES_TESTING", None)
+os.environ.setdefault("MOVES_MODE", "mock")
 
 # Ensure session secret is set for auth middleware
 if "MOVES_SESSION_SECRET_KEY" not in os.environ:
