@@ -609,18 +609,73 @@
     }
   }
 
+  function confidenceLabel(pct) {
+    if (pct >= 80) return `High confidence (${pct}%) — strong conviction`;
+    if (pct >= 60) return `Moderate confidence (${pct}%) — reasonable but watch closely`;
+    if (pct >= 40) return `Low-moderate confidence (${pct}%) — proceed with caution`;
+    return `Low confidence (${pct}%) — thesis conditions deteriorating`;
+  }
+
+  function sourceLabel(src) {
+    const map = {
+      thesis_update: 'thesis status change',
+      price_trigger: 'significant price movement',
+      congress_trade: 'congressional trading activity',
+      manual: 'manual evaluation',
+    };
+    return map[src] || src || 'unknown source';
+  }
+
+  function buildSignalNarrative(s) {
+    const confPct = Math.round((s.confidence || 0) * 100);
+    const isBuy = s.action.toLowerCase().includes('buy');
+    const parts = [];
+
+    // Opening: action + symbol + thesis context
+    let opener = `Recommending ${s.action} on ${s.symbol}`;
+    if (s.thesis_title) {
+      opener += ` based on the ${s.thesis_title} thesis`;
+      if (s.thesis_status) opener += ` (${s.thesis_status}`;
+      if (s.thesis_conviction != null) opener += `, ${Math.round(s.thesis_conviction * 100)}% conviction`;
+      if (s.thesis_status || s.thesis_conviction != null) opener += ')';
+    }
+    opener += '.';
+    parts.push(opener);
+
+    // Position context
+    if (s.current_position) {
+      const pos = s.current_position;
+      parts.push(`Currently holding ${pos.shares} shares ${pos.side || 'long'} at ${fmtCur(pos.avg_cost)}.`);
+    } else if (isBuy) {
+      let sizeNote = 'a new position';
+      if (s.size_pct) sizeNote += ` at ${fmtPct(s.size_pct * 100)} of NAV`;
+      parts.push(`Not currently in portfolio — this would be ${sizeNote}.`);
+    }
+
+    // Confidence
+    parts.push(confidenceLabel(confPct) + '.');
+
+    // Source
+    parts.push(`Source: ${sourceLabel(s.source)}.`);
+
+    return parts.join(' ');
+  }
+
   function signalCardHTML(s, isPending) {
     const actionCls = s.action.toLowerCase().includes('buy') ? 'buy' : 'sell';
     const confPct = Math.round((s.confidence || 0) * 100);
     const confColor = confPct >= 70 ? 'var(--green)' : confPct >= 40 ? 'var(--yellow)' : 'var(--red)';
+    const confLabel = confidenceLabel(confPct);
+    const narrative = buildSignalNarrative(s);
     return `<div class="signal-card ${isPending ? 'pending' : ''}">
       <div class="signal-header">
         <span class="action-badge ${actionCls}">${s.action}</span>
         <span class="signal-symbol">${s.symbol}</span>
-        <div class="confidence-bar"><div class="confidence-bar-track"><div class="confidence-bar-fill" style="width:${confPct}%;background:${confColor}"></div></div>${confPct}%</div>
+        <div class="confidence-bar"><div class="confidence-bar-track"><div class="confidence-bar-fill" style="width:${confPct}%;background:${confColor}"></div></div><span title="${confLabel}">${confPct}%</span></div>
         <span class="badge badge-muted">${s.source || 'unknown'}</span>
         ${isPending ? `<span class="status-badge pending">Pending</span>` : `<span class="status-badge ${s.status}">${s.status}</span>`}
       </div>
+      <p class="signal-narrative">${narrative}</p>
       ${s.reasoning ? `<div class="signal-reasoning truncated">${s.reasoning}</div>` : ''}
       <div class="signal-meta">
         ${s.thesis_title ? `<span>📋 ${s.thesis_title}</span>` : ''}
@@ -681,12 +736,22 @@
       // Summary strip
       const summaryEl = $('#principles-summary');
       if (summary.total_active != null) {
+        const totalChecks = (summary.total_validated ?? 0) + (summary.total_invalidated ?? 0);
+        const winRatePct = summary.validation_rate != null ? Math.round(summary.validation_rate * 100) : null;
+        let summaryNarrative = '';
+        if (totalChecks > 0 && winRatePct != null) {
+          summaryNarrative = `${summary.total_active} active principles guiding your trades. ${winRatePct}% overall win rate across ${totalChecks} validations.`;
+          if (discoveries.length) summaryNarrative += ` ${discoveries.length} new pattern${discoveries.length > 1 ? 's' : ''} discovered.`;
+        } else {
+          summaryNarrative = `${summary.total_active} principles active but untested — win rates will appear as trades mature.`;
+        }
         summaryEl.innerHTML = `
           <span class="ps-stat"><strong>${summary.total_active}</strong> active</span>
-          <span class="ps-stat"><strong>${summary.validation_rate != null ? fmtPct(summary.validation_rate * 100) : '—'}</strong> win rate</span>
+          <span class="ps-stat"><strong>${winRatePct != null ? fmtPct(winRatePct) : '—'}</strong> win rate</span>
           <span class="ps-stat">✓ ${summary.total_validated ?? 0} · ✗ ${summary.total_invalidated ?? 0}</span>
           ${discoveries.length ? `<span class="ps-discovery-badge">${discoveries.length} pattern${discoveries.length > 1 ? 's' : ''} discovered</span>` : ''}
           ${summary.last_check ? `<span class="ps-stat">Checked ${relTime(summary.last_check)}</span>` : ''}
+          <p class="principle-narrative summary-narrative">${summaryNarrative}</p>
         `;
       } else {
         summaryEl.innerHTML = '';
@@ -706,6 +771,28 @@
           const atRisk = inv > val * 2 && inv > 2;
           const weight = p.weight != null ? p.weight : 0.05;
 
+          // Build principle narrative
+          let pNarrative = '';
+          const totalApps = val + inv;
+          if (totalApps === 0) {
+            const createdDaysAgo = p.created_at ? Math.floor((Date.now() - new Date(p.created_at).getTime()) / 86400000) : null;
+            if (createdDaysAgo != null && createdDaysAgo <= 7) {
+              pNarrative = `Recently discovered from trade patterns — added ${createdDaysAgo} day${createdDaysAgo !== 1 ? 's' : ''} ago. No track record yet.`;
+            } else {
+              pNarrative = 'Never been tested in a real trade yet. Will be validated as trade outcomes come in.';
+            }
+          } else if (inv === 0) {
+            pNarrative = `Applied to ${totalApps} trade${totalApps > 1 ? 's' : ''}, all profitable. Perfect track record so far — ${winPct}% win rate.`;
+          } else if (val === 0) {
+            pNarrative = `Applied to ${totalApps} trade${totalApps > 1 ? 's' : ''}, ${totalApps === 1 ? 'it' : 'all'} lost money. Consider reviewing whether this still holds.`;
+          } else if (winPct >= 70) {
+            pNarrative = `Applied to ${totalApps} trades, ${val} were profitable. Your most reliable principle — ${winPct}% win rate.`;
+          } else if (winPct >= 50) {
+            pNarrative = `Applied to ${totalApps} trades, ${val} profitable and ${inv} not. Moderate ${winPct}% win rate — worth keeping but monitor.`;
+          } else {
+            pNarrative = `Applied to ${totalApps} trades, ${inv} lost money vs ${val} wins. Consider reviewing whether this still holds.`;
+          }
+
           return `<div class="principle-card" onclick="this.classList.toggle('open')">
             <div class="principle-header">
               <span class="principle-text">${p.text || p.principle}</span>
@@ -716,6 +803,7 @@
               </div>
               ${origin ? `<span class="origin-badge">${origin}</span>` : ''}
             </div>
+            <p class="principle-narrative">${pNarrative}</p>
             <div class="principle-details">
               <div class="pd-grid">
                 <div class="pd-item"><label>Validated</label><span>${val}</span></div>

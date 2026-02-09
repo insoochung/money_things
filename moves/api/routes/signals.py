@@ -65,6 +65,8 @@ class SignalResponse(BaseModel):
     symbol: str = Field(..., description="Stock symbol")
     thesis_id: int | None = Field(None, description="Associated thesis ID")
     thesis_title: str | None = Field(None, description="Associated thesis title")
+    thesis_status: str | None = Field(None, description="Associated thesis status")
+    thesis_conviction: float | None = Field(None, description="Thesis conviction score (0-1)")
     confidence: float = Field(..., description="Confidence score (0-1)")
     source: str = Field(..., description="Signal source")
     horizon: str | None = Field(None, description="Investment horizon")
@@ -81,6 +83,7 @@ class SignalResponse(BaseModel):
     stop_price: float | None = Field(None, description="Stop loss price")
     risk_score: float | None = Field(None, description="Risk score")
     days_pending: int | None = Field(None, description="Days since creation")
+    current_position: dict | None = Field(None, description="Current position if held")
 
 
 class SignalDecisionRequest(BaseModel):
@@ -145,7 +148,8 @@ async def list_signals(
 
         signals = engines.db.fetchall(
             f"""
-            SELECT s.*, t.title as thesis_title
+            SELECT s.*, t.title as thesis_title,
+                   t.status as thesis_status, t.conviction as thesis_conviction
             FROM signals s
             LEFT JOIN theses t ON s.thesis_id = t.id
             {where_clause}
@@ -182,6 +186,22 @@ async def list_signals(
             # Get risk score (placeholder - could be calculated by risk engine)
             risk_score = signal.get("risk_score")  # Might be None if not calculated
 
+            # Get current position if held
+            current_position = None
+            try:
+                pos = engines.db.fetchone(
+                    "SELECT shares, avg_cost, side FROM positions WHERE symbol = ? AND shares > 0",
+                    (signal["symbol"],),
+                )
+                if pos:
+                    current_position = {
+                        "shares": pos["shares"],
+                        "avg_cost": pos["avg_cost"],
+                        "side": pos["side"],
+                    }
+            except Exception as e:
+                logger.warning("Failed to get position for %s: %s", signal["symbol"], e)
+
             result.append(
                 SignalResponse(
                     id=signal["id"],
@@ -189,6 +209,8 @@ async def list_signals(
                     symbol=signal["symbol"],
                     thesis_id=signal["thesis_id"],
                     thesis_title=signal["thesis_title"],
+                    thesis_status=signal.get("thesis_status"),
+                    thesis_conviction=signal.get("thesis_conviction"),
                     confidence=signal["confidence"],
                     source=signal["source"],
                     horizon=signal["horizon"],
@@ -205,6 +227,7 @@ async def list_signals(
                     stop_price=signal.get("stop_price"),
                     risk_score=risk_score,
                     days_pending=days_pending,
+                    current_position=current_position,
                 )
             )
 

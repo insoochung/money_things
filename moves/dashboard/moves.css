@@ -712,6 +712,32 @@ tr:hover { background: var(--bg-hover); }
 .approve-btn:hover, .reject-btn:hover { opacity: .85; }
 .approve-btn:disabled, .reject-btn:disabled { opacity: .4; cursor: not-allowed; }
 
+/* — Signal & Principle Narratives — */
+.signal-narrative {
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 8px 0;
+  font-family: var(--font);
+}
+
+.principle-narrative {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin: 4px 0 0;
+  padding: 0 1.25rem 0.5rem;
+  font-family: var(--font);
+  font-style: italic;
+}
+
+.principle-narrative.summary-narrative {
+  width: 100%;
+  padding: 0.5rem 0 0;
+  font-style: normal;
+  font-size: 0.8rem;
+}
+
 .signals-divider {
   font-size: .7rem;
   text-transform: uppercase;
