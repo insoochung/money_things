@@ -57,7 +57,7 @@ Live at **https://munnythoughts.com** with Google OAuth.
 2. ~~**Sub-agent output → DB pipeline**~~: ✅ **DONE (previously)** — `thoughts/feedback.py` parses sub-agent JSON, saves journal/notes, queues conviction changes for approval. Tests in `thoughts/tests/test_feedback.py`.
 
 ### P1 — Important
-3. **Dashboard watchlist triggers not visible without auth bypass**: Can't verify visually. Need test or screenshot.
+3. ~~**Dashboard watchlist triggers not visible without auth bypass**~~: ✅ **DONE (2026-02-09)** — All dashboard `fetch()` calls centralized into `api()` (reads) and `apiWrite()` (mutations) helpers. Both redirect to `/auth/login` on 401/403. Commit `e45f006`.
 4. ~~**Earnings calendar is a static JSON file**~~: ✅ **DONE (2026-02-09)** — `earnings_calendar.py` now falls back to yfinance API for symbols not in static JSON. 24h cache. 14 tests. Commit `218ddbd`.
 5. ~~**Test suite hangs when run all-together**~~: ✅ **DONE (2026-02-09)** — Root cause: import conflict (both modules have `engine/` package). Created `run_tests.sh` that runs each module's tests in its own venv. 622 tests pass (451 moves + 171 thoughts). Commit `8443847`.
 
