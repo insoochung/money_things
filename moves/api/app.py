@@ -42,7 +42,18 @@ from fastapi.staticfiles import StaticFiles
 
 from api.auth import AuthMiddleware, create_auth_router
 from api.deps import EngineContainer, clear_engines, set_engines
-from api.routes import admin, fund, intelligence, performance, risk, signals, theses, trades, users
+from api.routes import (
+    admin,
+    fund,
+    intelligence,
+    performance,
+    risk,
+    signals,
+    tax,
+    theses,
+    trades,
+    users,
+)
 from api.websocket import create_websocket_router
 from broker.mock import MockBroker
 from config.settings import Mode, get_settings
@@ -369,6 +380,7 @@ def create_app() -> FastAPI:
     app.include_router(performance.router, prefix="/api/fund", tags=["performance"])
     app.include_router(risk.router, prefix="/api/fund", tags=["risk"])
     app.include_router(intelligence.router, prefix="/api/fund", tags=["intelligence"])
+    app.include_router(tax.router, prefix="/api/fund", tags=["tax"])
     app.include_router(admin.router, prefix="/api/fund", tags=["admin"])
     app.include_router(users.router, prefix="/api/fund", tags=["users"])
 

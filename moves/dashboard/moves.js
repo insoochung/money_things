@@ -1039,6 +1039,83 @@
     } catch (e) { alert('Error cloning thesis'); }
   };
 
+  // ── Tax & Accounts ──
+  async function loadTax() {
+    const el = $('#tax-section');
+    if (!el) return;
+    try {
+      const [summaries, candidates, accounts] = await Promise.all([
+        api('/api/fund/tax/summary').catch(() => []),
+        api('/api/fund/tax/harvest-candidates').catch(() => []),
+        api('/api/fund/tax/accounts').catch(() => []),
+      ]);
+
+      let html = '<h2>Tax & Accounts</h2>';
+
+      // Account cards
+      if (accounts.length) {
+        html += '<div class="card-grid">';
+        for (const a of accounts) {
+          const gc = cls(a.unrealized_gain);
+          html += `
+            <div class="card">
+              <div class="card-title">${a.account_name}</div>
+              <div class="card-subtitle">${a.account_type.replace(/_/g, ' ')}</div>
+              <div class="card-value">${fmtCur(a.total_value)}</div>
+              <div class="${gc}">${fmtCur(a.unrealized_gain)} (${fmtPct(a.unrealized_gain_pct)})</div>
+              <div class="card-meta">${a.tax_lots_count} lots · ${a.long_term_count} LT / ${a.short_term_count} ST</div>
+            </div>`;
+        }
+        html += '</div>';
+      }
+
+      // Tax summary per account
+      if (summaries.length) {
+        html += '<h3>Tax Summary</h3><table class="data-table"><thead><tr>' +
+          '<th>Account</th><th>Realized ST</th><th>Realized LT</th>' +
+          '<th>Unrealized ST</th><th>Unrealized LT</th><th>Est. Tax</th><th>Harvest Opps</th>' +
+          '</tr></thead><tbody>';
+        for (const s of summaries) {
+          html += `<tr>
+            <td>${s.account_type.replace(/_/g, ' ')}</td>
+            <td class="${cls(s.realized_st_gains)}">${fmtCur(s.realized_st_gains)}</td>
+            <td class="${cls(s.realized_lt_gains)}">${fmtCur(s.realized_lt_gains)}</td>
+            <td class="${cls(s.unrealized_st_gains)}">${fmtCur(s.unrealized_st_gains)}</td>
+            <td class="${cls(s.unrealized_lt_gains)}">${fmtCur(s.unrealized_lt_gains)}</td>
+            <td>${fmtCur(s.estimated_tax_liability)}</td>
+            <td class="negative">${fmtCur(s.harvesting_opportunities)}</td>
+          </tr>`;
+        }
+        html += '</tbody></table>';
+      }
+
+      // Harvest candidates
+      if (candidates.length) {
+        html += '<h3>Harvest Candidates</h3><table class="data-table"><thead><tr>' +
+          '<th>Symbol</th><th>Loss</th><th>Loss %</th><th>Shares</th>' +
+          '<th>Cost</th><th>Price</th><th>Wash Risk</th><th>Replace With</th>' +
+          '</tr></thead><tbody>';
+        for (const c of candidates) {
+          html += `<tr>
+            <td><strong>${c.symbol}</strong></td>
+            <td class="negative">${fmtCur(c.unrealized_loss)}</td>
+            <td class="negative">${fmtPct(c.loss_pct)}</td>
+            <td>${fmt(c.shares, 0)}</td>
+            <td>${fmtCur(c.cost_basis)}</td>
+            <td>${fmtCur(c.current_price)}</td>
+            <td>${c.wash_sale_risk ? '⚠️ Yes' : '✅ No'}</td>
+            <td>${c.suggested_replacement || '—'}</td>
+          </tr>`;
+        }
+        html += '</tbody></table>';
+      }
+
+      el.innerHTML = html || emptyHTML('No tax data available');
+    } catch (e) {
+      el.innerHTML = emptyHTML('Tax data unavailable');
+    }
+  }
+
   async function init() {
     initTheme();
     updateTimestamp();
@@ -1061,6 +1138,7 @@
       loadCongress(),
       loadPrinciples(),
       loadWhatIf(),
+      loadTax(),
     ]);
 
     updateTimestamp();

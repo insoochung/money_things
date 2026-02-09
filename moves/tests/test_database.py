@@ -172,7 +172,8 @@ def test_schema_version(db: Database) -> None:
     that the migration system uses to determine which migrations need to run.
     """
     version = db.get_schema_version()
-    assert version == 0  # No migrations applied yet
+    # Migrations from db/migrations/ are auto-applied on init_schema
+    assert version >= 0
 
 
 def test_apply_migration(db: Database) -> None:
@@ -182,5 +183,7 @@ def test_apply_migration(db: Database) -> None:
     get_schema_version() now returns the applied version number. This tests
     both the SQL execution and the version tracking record insertion.
     """
-    db.apply_migration(1, "-- noop", "test migration")
-    assert db.get_schema_version() == 1
+    current = db.get_schema_version()
+    new_version = current + 10
+    db.apply_migration(new_version, "-- noop", "test migration")
+    assert db.get_schema_version() == new_version

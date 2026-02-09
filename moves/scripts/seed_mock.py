@@ -46,6 +46,7 @@ def seed_mock() -> None:
     _seed_kill_switch(db)
     _seed_principles(db)
     _seed_congress_trades(db)
+    _seed_tax_lots(db)
 
     db.close()
     print("✅ Mock database seeded successfully")
@@ -66,13 +67,20 @@ def _seed_users(db: Database) -> None:
 
 
 def _seed_accounts(db: Database) -> None:
-    """Seed brokerage accounts."""
+    """Seed brokerage accounts — taxable and Roth IRA."""
     db.execute(
         """INSERT OR IGNORE INTO accounts
            (name, broker, account_type, account_hash, purpose, active)
            VALUES ('Individual (...441)', 'Charles Schwab',
                    'individual_brokerage', '441',
                    'Active trading', TRUE)"""
+    )
+    db.execute(
+        """INSERT OR IGNORE INTO accounts
+           (name, broker, account_type, account_hash, purpose, active)
+           VALUES ('Roth IRA (...772)', 'Charles Schwab',
+                   'roth_ira', '772',
+                   'Long-term tax-free growth', TRUE)"""
     )
     db.connect().commit()
     print("  ✓ accounts")
@@ -321,6 +329,53 @@ def _seed_congress_trades(db: Database) -> None:
         )
     db.connect().commit()
     print("  ✓ congress_trades")
+
+
+def _seed_tax_lots(db: Database) -> None:
+    """Seed tax lots split between taxable and Roth IRA accounts."""
+    accounts = db.fetchall("SELECT id, account_type FROM accounts")
+    taxable = next((a for a in accounts if a["account_type"] == "individual_brokerage"), None)
+    roth = next((a for a in accounts if a["account_type"] == "roth_ira"), None)
+    if not taxable or not roth:
+        print("  ⚠ skipping tax_lots (missing accounts)")
+        return
+
+    # Taxable account lots (short-term, some at a loss for harvesting)
+    taxable_lots = [
+        ("NVDA", 25, 142.50, "2025-09-15"),
+        ("NVDA", 20, 155.00, "2025-11-01"),
+        ("AAPL", 50, 189.25, "2025-08-20"),
+        ("TSLA", 25, 248.90, "2025-10-10"),
+        ("AMD", 30, 180.00, "2025-07-15"),  # potential loss candidate
+        ("AMZN", 20, 198.60, "2025-09-01"),
+    ]
+    for symbol, shares, cost, date in taxable_lots:
+        db.execute(
+            """INSERT INTO tax_lots
+               (symbol, shares, cost_per_share, acquired_date, account_id, user_id)
+               VALUES (?, ?, ?, ?, ?, 1)""",
+            (symbol, shares, cost, date, taxable["id"]),
+        )
+
+    # Roth IRA lots (long-term holds)
+    roth_lots = [
+        ("MSFT", 35, 415.80, "2024-03-10"),
+        ("GOOG", 60, 178.40, "2024-06-15"),
+        ("AAPL", 30, 175.00, "2024-01-20"),
+        ("NVDA", 20, 95.00, "2024-02-15"),
+        ("AMD", 25, 140.00, "2024-05-01"),
+        ("AMZN", 20, 170.00, "2024-04-20"),
+    ]
+    for symbol, shares, cost, date in roth_lots:
+        db.execute(
+            """INSERT INTO tax_lots
+               (symbol, shares, cost_per_share, acquired_date, account_id, user_id)
+               VALUES (?, ?, ?, ?, ?, 1)""",
+            (symbol, shares, cost, date, roth["id"]),
+        )
+
+    db.connect().commit()
+    print("  ✓ tax_lots")
 
 
 if __name__ == "__main__":
