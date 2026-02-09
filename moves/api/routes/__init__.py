@@ -20,7 +20,7 @@ shared engine container with database and service instances.
 """
 
 # Import all route modules for easy access
-from . import admin, fund, intelligence, performance, risk, signals, theses, trades, users
+from . import admin, fund, intelligence, outcomes, performance, risk, signals, theses, trades, users
 
 __all__ = [
     "fund",
@@ -31,5 +31,6 @@ __all__ = [
     "risk",
     "intelligence",
     "admin",
+    "outcomes",
     "users",
 ]
