@@ -307,6 +307,27 @@ CREATE TABLE IF NOT EXISTS price_history (
 CREATE INDEX IF NOT EXISTS idx_price_history_symbol ON price_history(symbol);
 CREATE INDEX IF NOT EXISTS idx_price_history_timestamp ON price_history(timestamp);
 
+-- POLITICIAN SCORES
+CREATE TABLE IF NOT EXISTS politician_scores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    politician TEXT NOT NULL UNIQUE,
+    chamber TEXT,
+    party TEXT,
+    state TEXT,
+    committees TEXT,  -- JSON array
+    total_trades INTEGER DEFAULT 0,
+    win_rate REAL DEFAULT 0,
+    avg_return_30d REAL DEFAULT 0,
+    avg_return_60d REAL DEFAULT 0,
+    avg_return_90d REAL DEFAULT 0,
+    best_sectors TEXT,  -- JSON array
+    trade_size_preference TEXT,
+    filing_delay_avg_days REAL DEFAULT 0,
+    score REAL DEFAULT 0,  -- composite 0-100
+    tier TEXT DEFAULT 'unknown',  -- whale/notable/average/noise
+    last_updated TEXT DEFAULT (datetime('now'))
+);
+
 -- MIGRATION TRACKING
 CREATE TABLE IF NOT EXISTS schema_version (
     version     INTEGER PRIMARY KEY,

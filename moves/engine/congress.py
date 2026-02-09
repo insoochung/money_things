@@ -20,6 +20,7 @@ from bs4 import BeautifulSoup
 
 from db.database import Database
 from engine import Signal, SignalAction, SignalSource, SignalStatus
+from engine.congress_scoring import PoliticianScorer, calculate_disclosure_lag, parse_amount_bucket
 
 if TYPE_CHECKING:
     from engine.signals import SignalEngine
@@ -40,6 +41,7 @@ class CongressTradesEngine:
     def __init__(self, db: Database, signal_engine: SignalEngine | None = None) -> None:
         self.db = db
         self.signal_engine = signal_engine
+        self.scorer = PoliticianScorer(db)
 
     def fetch_recent(self, days: int = 7) -> list[dict]:
         """Fetch recent congressional trades from available sources.
@@ -252,11 +254,15 @@ class CongressTradesEngine:
             if existing:
                 continue
 
+            enriched = self.scorer.enrich_trade(trade)
+            lag = calculate_disclosure_lag(date_traded, date_filed)
+            bucket = parse_amount_bucket(trade.get("amount_range", ""))
             self.db.execute(
                 """INSERT INTO congress_trades
                    (politician, symbol, action, amount_range, date_filed,
-                    date_traded, source_url)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    date_traded, source_url, politician_score,
+                    disclosure_lag_days, trade_size_bucket, committee_relevant)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     politician,
                     symbol,
@@ -265,6 +271,10 @@ class CongressTradesEngine:
                     date_filed,
                     date_traded,
                     trade.get("source_url", ""),
+                    enriched.get("politician_score"),
+                    lag,
+                    bucket,
+                    enriched.get("committee_relevant", 0),
                 ),
             )
             inserted += 1
@@ -341,13 +351,27 @@ class CongressTradesEngine:
             symbol = trade["symbol"]
             thesis_id = thesis_map.get(symbol)
 
+            # Enrich trade and check tier
+            enriched = self.scorer.enrich_trade(trade)
+            tier = enriched.get("politician_tier", "unknown")
+
+            # Skip noise-tier politicians
+            if tier == "noise":
+                continue
+
+            # Set confidence based on tier
+            confidence_map = {"whale": 0.6, "notable": 0.45, "average": 0.3, "unknown": 0.3}
+            confidence = confidence_map.get(tier, 0.3)
+
+            reasoning = self.scorer.build_reasoning(enriched)
+
             signal = Signal(
                 action=SignalAction.BUY,
                 symbol=symbol,
                 thesis_id=thesis_id,
-                confidence=0.3,
+                confidence=confidence,
                 source=SignalSource.CONGRESS_TRADE,
-                reasoning=f"Congress member {trade.get('politician', 'unknown')} bought {symbol}",
+                reasoning=reasoning,
                 status=SignalStatus.PENDING,
             )
             created = self.signal_engine.create_signal(signal)

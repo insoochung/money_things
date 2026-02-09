@@ -66,6 +66,11 @@ class CongressTrade(BaseModel):
     our_position_side: str | None = Field(None, description="Our position side")
     sentiment_signal: float = Field(..., description="Sentiment strength (0-100)")
     source_url: str = Field(..., description="Source URL")
+    politician_score: float | None = Field(None, description="Politician composite score")
+    politician_tier: str | None = Field(None, description="Politician tier")
+    disclosure_lag_days: int | None = Field(None, description="Days between trade and filing")
+    trade_size_bucket: str | None = Field(None, description="Trade size bucket")
+    committee_relevant: bool = Field(False, description="Committee-relevant trade")
 
 
 class CongressSummary(BaseModel):
@@ -190,6 +195,127 @@ class WhatIfSummary(BaseModel):
     worst_pass: dict = Field(..., description="Worst pass decision")
 
 
+class PoliticianLeaderboardEntry(BaseModel):
+    """Politician leaderboard entry.
+
+    Attributes:
+        politician: Politician name.
+        score: Composite score 0-100.
+        tier: Tier label.
+        total_trades: Number of trades.
+        win_rate: Estimated win rate.
+        trade_size_preference: Preferred trade size.
+        filing_delay_avg_days: Average filing delay.
+    """
+
+    politician: str = Field(..., description="Politician name")
+    score: float = Field(..., description="Composite score")
+    tier: str = Field(..., description="Tier label")
+    total_trades: int = Field(0, description="Total trades")
+    win_rate: float = Field(0, description="Win rate")
+    trade_size_preference: str = Field("unknown", description="Size preference")
+    filing_delay_avg_days: float = Field(0, description="Avg filing delay")
+
+
+@router.get("/congress-trades/leaderboard", response_model=list[PoliticianLeaderboardEntry])
+async def get_congress_leaderboard(
+    limit: int = Query(20, ge=1, le=100, description="Number of politicians"),
+    engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
+) -> list[PoliticianLeaderboardEntry]:
+    """Get top politicians ranked by composite score.
+
+    Args:
+        limit: Max politicians to return.
+        engines: Engine container.
+
+    Returns:
+        List of PoliticianLeaderboardEntry sorted by score desc.
+    """
+    try:
+        from engine.congress_scoring import PoliticianScorer
+
+        scorer = PoliticianScorer(engines.db)
+        top = scorer.get_top_politicians(n=limit)
+        return [
+            PoliticianLeaderboardEntry(
+                politician=r["politician"],
+                score=r.get("score", 0),
+                tier=r.get("tier", "unknown"),
+                total_trades=r.get("total_trades", 0),
+                win_rate=r.get("win_rate", 0),
+                trade_size_preference=r.get("trade_size_preference", "unknown"),
+                filing_delay_avg_days=r.get("filing_delay_avg_days", 0),
+            )
+            for r in top
+        ]
+    except Exception as e:
+        logger.error("Failed to get leaderboard: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get leaderboard: {str(e)}",
+        )
+
+
+@router.get("/congress-trades/whales", response_model=list[CongressTrade])
+async def get_whale_trades(
+    days: int = Query(30, ge=1, le=365, description="Days to look back"),
+    engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
+) -> list[CongressTrade]:
+    """Get only whale-tier politician trades.
+
+    Args:
+        days: Number of days to look back.
+        engines: Engine container.
+
+    Returns:
+        List of CongressTrade from whale-tier politicians.
+    """
+    try:
+        trades = engines.db.fetchall(f"""
+            SELECT ct.*, ps.score as pol_score, ps.tier as pol_tier
+            FROM congress_trades ct
+            LEFT JOIN politician_scores ps ON ct.politician = ps.politician
+            WHERE ct.date_filed >= date('now', '-{days} days')
+            AND ps.tier = 'whale'
+            ORDER BY ct.date_filed DESC
+        """)
+
+        from datetime import date, datetime
+
+        result = []
+        for trade in trades:
+            try:
+                filed_date = datetime.strptime(trade["date_filed"], "%Y-%m-%d").date()
+                days_ago = (date.today() - filed_date).days
+            except Exception:
+                days_ago = 0
+
+            result.append(
+                CongressTrade(
+                    id=trade["id"],
+                    politician=trade["politician"],
+                    symbol=trade["symbol"],
+                    action=trade["action"],
+                    amount_range=trade.get("amount_range", ""),
+                    date_filed=trade["date_filed"],
+                    date_traded=trade.get("date_traded", ""),
+                    days_ago=days_ago,
+                    portfolio_overlap=False,
+                    sentiment_signal=80.0,
+                    source_url=trade.get("source_url", ""),
+                )
+            )
+        return result
+    except Exception as e:
+        logger.error("Failed to get whale trades: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get whale trades: {str(e)}",
+        )
+
+
 @router.get("/congress-trades", response_model=list[CongressTrade])
 async def get_congress_trades(
     days: int = Query(30, ge=1, le=365, description="Days to look back"),
@@ -211,15 +337,17 @@ async def get_congress_trades(
         List of CongressTrade models with overlap analysis.
     """
     try:
-        # Get Congress trades from database
+        # Get Congress trades from database with politician scores
         where_clause = f"""
-            WHERE date_filed >= date('now', '-{days} days')
+            WHERE ct.date_filed >= date('now', '-{days} days')
         """
 
         congress_trades = engines.db.fetchall(f"""
-            SELECT * FROM congress_trades
+            SELECT ct.*, ps.score as pol_score, ps.tier as pol_tier
+            FROM congress_trades ct
+            LEFT JOIN politician_scores ps ON ct.politician = ps.politician
             {where_clause}
-            ORDER BY date_filed DESC
+            ORDER BY ct.date_filed DESC
         """)
 
         # Get current portfolio positions
@@ -297,6 +425,11 @@ async def get_congress_trades(
                     our_position_side=our_position_side,
                     sentiment_signal=sentiment_signal,
                     source_url=trade["source_url"],
+                    politician_score=trade.get("pol_score"),
+                    politician_tier=trade.get("pol_tier"),
+                    disclosure_lag_days=trade.get("disclosure_lag_days"),
+                    trade_size_bucket=trade.get("trade_size_bucket"),
+                    committee_relevant=bool(trade.get("committee_relevant", 0)),
                 )
             )
 

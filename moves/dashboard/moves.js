@@ -731,22 +731,35 @@
       const trades = Array.isArray(d) ? d : d.trades || [];
       if (!trades.length) { $('#congress-body').innerHTML = `<tr><td colspan="6">${emptyHTML('No congress trades')}</td></tr>`; return; }
       const myTickers = new Set(state.positions.map(p => p.ticker || p.symbol));
-      $('#congress-body').innerHTML = trades.map(t => {
+      const showNoise = window._showCongressNoise || false;
+      $('#congress-body').innerHTML = trades.filter(t => {
+        if (!showNoise && (t.politician_tier === 'noise')) return false;
+        return true;
+      }).map(t => {
         const ticker = t.ticker || t.symbol;
         const overlap = myTickers.has(ticker);
         const traded = t.date_traded || t.date || '';
         const filed = t.date_filed || t.filed_date || '';
-        const lagDays = traded && filed ? Math.round((new Date(filed) - new Date(traded)) / 86400000) : null;
+        const lagDays = t.disclosure_lag_days != null ? t.disclosure_lag_days : (traded && filed ? Math.round((new Date(filed) - new Date(traded)) / 86400000) : null);
         const lagLabel = lagDays != null ? `<span class="badge badge-muted" title="Disclosed ${lagDays}d after trade">📅 ${lagDays}d lag</span>` : '';
-        return `<tr class="${overlap ? 'overlap' : ''}">
-          <td>${t.member || t.representative || t.politician}</td>
+        const tierEmoji = {'whale':'🐋','notable':'⭐','average':'','noise':'🔇'}[t.politician_tier] || '';
+        const tierBadge = t.politician_tier && t.politician_tier !== 'unknown' ? `<span class="badge badge-${t.politician_tier === 'whale' ? 'green' : t.politician_tier === 'notable' ? 'blue' : 'muted'}" title="Score: ${t.politician_score || '?'}">${tierEmoji} ${t.politician_tier}</span>` : '';
+        const scoreBadge = t.politician_score != null ? `<span class="badge badge-muted" title="Politician score">${Math.round(t.politician_score)}</span>` : '';
+        return `<tr class="${overlap ? 'overlap' : ''} ${t.politician_tier === 'average' ? 'muted-row' : ''}">
+          <td>${t.member || t.representative || t.politician} ${tierBadge} ${scoreBadge}</td>
           <td><strong>${ticker}</strong></td>
           <td>${t.action || t.type}</td>
-          <td class="hide-tablet">${t.amount || t.amount_range || '—'}</td>
+          <td class="hide-tablet">${t.amount || t.amount_range || '—'} ${t.trade_size_bucket ? `<span class="badge badge-muted">${t.trade_size_bucket}</span>` : ''}</td>
           <td>${traded || filed || '—'} ${lagLabel}</td>
           <td>${overlap ? '⚠️' : ''}</td>
         </tr>`;
       }).join('');
+      // Add show all toggle if not present
+      if (!document.getElementById('congress-show-all')) {
+        const toggleHtml = `<label id="congress-show-all" style="font-size:12px;color:#999;cursor:pointer;margin-left:8px"><input type="checkbox" onchange="window._showCongressNoise=this.checked;loadCongress()"> Show noise</label>`;
+        const header = document.querySelector('#congress-body')?.closest('table')?.previousElementSibling;
+        if (header && !header.querySelector('#congress-show-all')) header.insertAdjacentHTML('beforeend', toggleHtml);
+      }
     } catch (e) {
       $('#congress-body').innerHTML = `<tr><td colspan="6">${errorHTML('Failed to load congress', loadCongress)}</td></tr>`;
     }
