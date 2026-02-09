@@ -13,8 +13,9 @@ from __future__ import annotations
 import os
 import sys
 
-# Only enable testing mode if explicitly requested
-# (MOVES_TESTING=1 bypasses all authentication)
+# Disable testing mode — auth is live (Google OAuth)
+# To re-enable for local dev: MOVES_TESTING=1 python3 run.py
+os.environ.pop("MOVES_TESTING", None)
 
 # Ensure session secret is set for auth middleware
 if "MOVES_SESSION_SECRET_KEY" not in os.environ:
