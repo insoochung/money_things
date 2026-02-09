@@ -105,6 +105,8 @@ class MoneyMovesBot:
     async def start(self) -> None:
         """Build the application, register handlers, and send startup message."""
         self.app = Application.builder().token(self.token).build()
+        self.app.add_handler(CommandHandler("start", self.cmd_help))
+        self.app.add_handler(CommandHandler("help", self.cmd_help))
         self.app.add_handler(CommandHandler("status", self.cmd_status))
         self.app.add_handler(CommandHandler("positions", self.cmd_positions))
         self.app.add_handler(CommandHandler("killswitch", self.cmd_killswitch))
@@ -260,6 +262,23 @@ class MoneyMovesBot:
 
         label = "🔴 ON — All trading halted" if new_state else "🟢 OFF — Trading active"
         await update.message.reply_text(f"Kill Switch: {label}")
+
+    async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /start and /help — show available commands."""
+        mode_label = "Mock" if self.mode == Mode.MOCK else "Live"
+        text = (
+            "💰 *Money Moves* — Investment Engine\n"
+            f"Mode: {mode_label}\n\n"
+            "*Commands:*\n"
+            "/status — NAV, returns, exposure\n"
+            "/positions — Open positions summary\n"
+            "/killswitch — Toggle emergency trading halt\n"
+            "/mode — Show current mode\n"
+            "/help — This message\n\n"
+            "Signal notifications appear here with "
+            "Approve/Reject buttons when generated."
+        )
+        await update.message.reply_text(text, parse_mode="Markdown")
 
     async def cmd_mode(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /mode — show current execution mode."""
