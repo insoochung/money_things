@@ -487,8 +487,128 @@ This closes the gap between "I have an idea" and "the system is acting on it."
 
 ---
 
+---
+
+## 10b. Signal Generator Rethink
+
+### What the original journal did (~/workspace/obsidian/money_journal/)
+
+The original system had a much richer pipeline with four specialized agents:
+1. **Researcher** — facts only, no opinions. Fetches fundamentals, news, prediction markets
+2. **Analyst** — forms structured theses with success/failure criteria, review triggers
+3. **Critic** — devil's advocate. Challenges every assumption, rates risk
+4. **Synthesizer** — portfolio-level view across all theses
+
+And a **watchlist with triggers:**
+- Entry triggers (price targets for buys)
+- Exit triggers (stop losses, take profits)
+- Deadline triggers (earnings dates, trading windows)
+- Stale research flags (>30 days old → refresh)
+
+And **calibration tracking:**
+- Win rate by conviction level
+- Timeframe accuracy (did you hold as long as you planned?)
+- Conviction calibration (are "high conviction" picks actually better?)
+
+### What our signal generator is missing
+
+**Current signal generator inputs:** thesis conviction + price movement >3%/5% + congress trades
+
+**What it should also consider:**
+
+1. **Watchlist triggers** — the original journal had specific entry/exit prices. If META hits $600 (the "add more" trigger), that should generate a signal. Currently we only react to thesis conviction, not price levels.
+
+2. **Earnings calendar** — don't generate BUY signals 2 days before earnings (binary event risk). Don't generate signals during META's trading blackout. The watchlist tracked upcoming deadlines.
+
+3. **News events** — `news_scanner.py` exists but isn't wired to signal generation. High-impact news on a thesis symbol should boost/lower signal confidence.
+
+4. **Critic pass** — before a signal goes live, run the critic lens. "Is the thesis assumption still valid? Has something changed?" This catches stale theses generating signals on autopilot.
+
+5. **Calibration feedback** — if our high-conviction signals historically only win 40% of the time, we should lower confidence scores. The metrics.md structure from the original journal tracks this.
+
+6. **Discovery pipeline** — the original journal had structured discovery sessions that found new tickers per thesis. Our discovery engine exists but doesn't feed into signal generation. A discovery session should create watchlist entries with triggers.
+
+### Revised Signal Generator Design
+
+```
+INPUTS (expanded):
+├── Thesis conviction + status (existing)
+├── Price triggers from watchlist (NEW)
+│   ├── Entry targets: "buy if CRWD drops to $350"
+│   ├── Exit targets: "sell if META hits $850"  
+│   └── Stop losses: "sell if QCOM below $115"
+├── Earnings calendar (NEW)
+│   └── Block signals within N days of earnings
+├── Trading windows (existing, but not wired)
+│   └── Block META signals during blackout
+├── News events (existing code, needs wiring)
+│   └── High-impact news → boost/lower confidence
+├── Congress trades (existing)
+│   └── Whale-tier buys → low-confidence signal
+├── Calibration data (NEW)
+│   └── Historical accuracy adjusts confidence
+└── Critic check (NEW)
+    └── Pre-flight validation of thesis assumptions
+
+PROCESS:
+1. For each active thesis, evaluate all symbols
+2. Check watchlist triggers (price, date, event)
+3. Check if any blocking conditions (earnings, blackout, cooldown)
+4. Score confidence using multi-factor model:
+   - Thesis conviction (30%)
+   - Price trigger proximity (20%)
+   - News sentiment (15%)
+   - Congress trade alignment (10%)
+   - Calibration adjustment (10%)
+   - Critic score (15%)
+5. Generate signal if confidence > threshold
+6. Route to appropriate account (tax engine)
+7. Send to Telegram for approval
+
+OUTPUT:
+Signal with rich reasoning:
+"BUY CRWD @ $395 → Roth IRA
+ Thesis: AI cybersecurity (conviction 75%, strengthening)
+ Trigger: price within 5% of $380 entry target
+ News: +2 positive articles this week
+ Congress: Pelosi bought PANW (sector aligned)
+ Critic: thesis assumptions still valid, no earnings for 45 days
+ Calibration: cybersecurity thesis 2/2 profitable historically
+ Confidence: 0.72"
+```
+
+### Watchlist Table Addition
+
+```sql
+CREATE TABLE IF NOT EXISTS watchlist_triggers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    thesis_id INTEGER,
+    trigger_type TEXT NOT NULL,  -- 'entry', 'exit', 'stop_loss', 'take_profit'
+    trigger_price REAL,
+    trigger_date TEXT,  -- for date-based triggers
+    trigger_event TEXT,  -- for event-based triggers  
+    active INTEGER DEFAULT 1,
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+```
+
+### Earnings Calendar
+
+Use existing free APIs (or scrape) to maintain an earnings calendar. Block signal generation N days before/after earnings for affected symbols.
+
+---
+
 ## 11. What's NOT Changing
-- moves module core code (engine, signals, trades)
+- moves module core code structure (engine, signals, trades)
 - Telegram bot command names  
 - thoughts DB schema (tables are fine)
 - Dashboard (no journal view in v1)
+
+## 12. What IS Changing
+- Signal generator gets richer input model (watchlist triggers, news, earnings, calibration, critic)
+- Thoughts module gets real sub-agent spawning with multi-agent roles (researcher, analyst, critic)
+- Watchlist triggers as a new DB table in moves
+- Outcome feedback loop (daily job)
+- Thought routing and tagging
