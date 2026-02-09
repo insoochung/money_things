@@ -1,12 +1,13 @@
 """Telegram command handlers for the thoughts module.
 
-Five commands: /think, /think result handling, /note, /journal, /brief.
+Commands: /think, /think result handling, /note, /journal, /brief, /trade.
 Called from the moves bot's telegram handler.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from bridge import ThoughtsBridge
@@ -599,3 +600,158 @@ def _parse_thesis_symbols(thesis: dict[str, Any]) -> list[str]:
             # Comma-separated string
             return [s.strip() for s in raw.split(",") if s.strip()]
     return list(raw) if raw else []
+
+
+# ── /trade command ───────────────────────────────────────────────
+
+
+_TRADE_RE = re.compile(
+    r"(?i)^(buy|sell)\s+"
+    r"([A-Z]{1,10})\s+"
+    r"(\d+(?:\.\d+)?)\s*"
+    r"@\s*\$?(\d+(?:\.\d+)?)$"
+)
+
+
+def parse_trade_command(text: str) -> dict[str, Any] | None:
+    """Parse '/trade BUY META 10 @ 650.00' into a dict.
+
+    Returns None if the format doesn't match.
+    """
+    text = text.strip()
+    m = _TRADE_RE.match(text)
+    if not m:
+        return None
+    return {
+        "action": m.group(1).upper(),
+        "symbol": m.group(2).upper(),
+        "shares": float(m.group(3)),
+        "price": float(m.group(4)),
+    }
+
+
+def cmd_trade(text: str) -> dict[str, Any]:
+    """Handle /trade command — log a manual trade.
+
+    Usage:
+        /trade BUY META 10 @ 650.00
+        /trade SELL QCOM 50 @ 140.00
+
+    Calls the moves API to record the trade and update positions.
+
+    Args:
+        text: Everything after '/trade '.
+
+    Returns:
+        Dict with 'message' key for Telegram response.
+    """
+    parsed = parse_trade_command(text)
+    if not parsed:
+        return {
+            "message": (
+                "❌ Invalid format. Use:\n"
+                "`/trade BUY META 10 @ 650.00`\n"
+                "`/trade SELL QCOM 50 @ 140.00`"
+            )
+        }
+
+    # Try API first, fall back to direct DB
+    try:
+        import requests
+
+        resp = requests.post(
+            "http://localhost:8000/api/fund/trades/manual",
+            json=parsed,
+            timeout=10,
+        )
+        if resp.ok:
+            d = resp.json()
+            return {"message": f"✅ {d['message']}"}
+        else:
+            detail = resp.json().get("detail", resp.text)
+            return {"message": f"❌ {detail}"}
+    except Exception:
+        pass
+
+    # Direct DB fallback
+    try:
+        import sys
+        from pathlib import Path
+
+        moves_root = Path(__file__).resolve().parent.parent / "moves"
+        if str(moves_root) not in sys.path:
+            sys.path.insert(0, str(moves_root))
+
+        from db.database import Database
+
+        db_path = moves_root / "data" / "moves_live.db"
+        if not db_path.exists():
+            db_path = moves_root / "data" / "moves_mock.db"
+        db = Database(db_path)
+
+        symbol = parsed["symbol"]
+        action = parsed["action"]
+        shares = parsed["shares"]
+        price = parsed["price"]
+        total = shares * price
+
+        if action == "SELL":
+            pos = db.fetchone(
+                "SELECT shares FROM positions WHERE symbol = ?",
+                (symbol,),
+            )
+            held = pos["shares"] if pos else 0
+            if held < shares:
+                return {
+                    "message": (
+                        f"❌ Can't sell {shares} {symbol} "
+                        f"— only hold {held}"
+                    )
+                }
+
+        if action == "BUY":
+            pos = db.fetchone(
+                "SELECT id, shares, avg_cost FROM positions "
+                "WHERE symbol = ?",
+                (symbol,),
+            )
+            if pos and pos["shares"] > 0:
+                new_shares = pos["shares"] + shares
+                new_avg = (
+                    (pos["shares"] * pos["avg_cost"] + shares * price)
+                    / new_shares
+                )
+                db.execute(
+                    "UPDATE positions SET shares=?, avg_cost=?, "
+                    "updated_at=datetime('now') WHERE id=?",
+                    (new_shares, new_avg, pos["id"]),
+                )
+            else:
+                db.execute(
+                    "INSERT INTO positions (symbol, shares, avg_cost, side)"
+                    " VALUES (?, ?, ?, 'long')",
+                    (symbol, shares, price),
+                )
+        else:
+            db.execute(
+                "UPDATE positions SET shares = shares - ?, "
+                "updated_at=datetime('now') WHERE symbol = ?",
+                (shares, symbol),
+            )
+
+        db.execute(
+            "INSERT INTO trades (symbol, action, shares, price, "
+            "total_value, broker, timestamp) "
+            "VALUES (?, ?, ?, ?, ?, 'manual', datetime('now'))",
+            (symbol, action, shares, price, total),
+        )
+        db.connect().commit()
+
+        return {
+            "message": (
+                f"✅ {action} {shares} {symbol} @ ${price:,.2f} "
+                f"(${total:,.2f}) logged"
+            )
+        }
+    except Exception as e:
+        return {"message": f"❌ Failed to log trade: {e}"}

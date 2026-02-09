@@ -1,14 +1,13 @@
 """Trade history API endpoints.
 
 This module provides REST API endpoints for retrieving executed trade history
-with filtering and pagination capabilities. These endpoints power the dashboard
-trade history table and trade analysis features.
+with filtering and pagination capabilities, plus manual trade input for
+logging trades executed outside the system.
 
 Endpoints:
-    GET /api/fund/trades - List executed trades with filtering options
-
-Trade data includes execution details, realized P/L, and links back to
-the original signals and theses that generated the trades.
+    GET  /api/fund/trades         - List executed trades with filtering
+    POST /api/fund/trades/manual  - Log a manual trade and update positions
+    DELETE /api/fund/trades/{id}  - Undo a manual trade (reverse position)
 
 Dependencies:
     - Requires authenticated session via auth middleware
@@ -18,6 +17,7 @@ Dependencies:
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -344,4 +344,322 @@ async def get_trades_summary(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get trades summary: {str(e)}",
+        )
+
+
+# ── Manual Trade Input ──────────────────────────────────────────────
+
+
+class ManualTradeRequest(BaseModel):
+    """Request body for logging a manual trade.
+
+    Attributes:
+        symbol: Stock ticker (e.g. META, QCOM).
+        action: Trade direction — 'buy' or 'sell'.
+        shares: Number of shares traded (must be positive).
+        price: Execution price per share (must be positive).
+        date: Trade date ISO string. Defaults to today.
+        broker: Broker name (e.g. 'Schwab', 'E*Trade').
+        account_id: Account ID in the accounts table.
+        thesis_id: Optional thesis to link this trade to.
+        notes: Free-form notes about the trade.
+    """
+
+    symbol: str = Field(..., min_length=1, max_length=10)
+    action: str = Field(..., pattern=r"(?i)^(buy|sell)$")
+    shares: float = Field(..., gt=0)
+    price: float = Field(..., gt=0)
+    date: str | None = Field(None, description="ISO date, defaults to today")
+    broker: str = Field("", description="Broker name")
+    account_id: int | None = Field(None, description="Account ID")
+    thesis_id: int | None = Field(None, description="Thesis ID to link")
+    notes: str = Field("", description="Trade notes")
+
+
+class ManualTradeResponse(BaseModel):
+    """Response after a manual trade is logged."""
+
+    trade_id: int
+    symbol: str
+    action: str
+    shares: float
+    price: float
+    total_value: float
+    position_shares: float
+    position_avg_cost: float
+    message: str
+
+
+def _update_position_for_buy(
+    db: Any, symbol: str, shares: float, price: float,
+    account_id: int | None, thesis_id: int | None,
+) -> tuple[float, float]:
+    """Update or create position for a BUY trade.
+
+    Returns (new_shares, new_avg_cost).
+    """
+    pos = db.fetchone(
+        "SELECT id, shares, avg_cost FROM positions WHERE symbol = ?",
+        (symbol,),
+    )
+    if pos and pos["shares"] > 0:
+        old_shares = pos["shares"]
+        old_cost = pos["avg_cost"]
+        new_shares = old_shares + shares
+        new_avg = (
+            (old_shares * old_cost + shares * price) / new_shares
+        )
+        db.execute(
+            """UPDATE positions
+               SET shares = ?, avg_cost = ?, updated_at = datetime('now')
+               WHERE id = ?""",
+            (new_shares, new_avg, pos["id"]),
+        )
+        return new_shares, new_avg
+    else:
+        db.execute(
+            """INSERT INTO positions
+               (symbol, shares, avg_cost, side, account_id, thesis_id)
+               VALUES (?, ?, ?, 'long', ?, ?)""",
+            (symbol, shares, price, account_id, thesis_id),
+        )
+        return shares, price
+
+
+def _update_position_for_sell(
+    db: Any, symbol: str, shares: float, price: float,
+) -> tuple[float, float, float | None]:
+    """Update position for a SELL trade.
+
+    Returns (new_shares, avg_cost, realized_pnl).
+    Raises HTTPException if insufficient shares.
+    """
+    pos = db.fetchone(
+        "SELECT id, shares, avg_cost FROM positions WHERE symbol = ?",
+        (symbol,),
+    )
+    if not pos or pos["shares"] < shares:
+        held = pos["shares"] if pos else 0
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Insufficient shares: trying to sell {shares} "
+                f"{symbol} but only hold {held}"
+            ),
+        )
+    avg_cost = pos["avg_cost"]
+    realized_pnl = (price - avg_cost) * shares
+    new_shares = pos["shares"] - shares
+    db.execute(
+        """UPDATE positions
+           SET shares = ?, updated_at = datetime('now')
+           WHERE id = ?""",
+        (new_shares, pos["id"]),
+    )
+    return new_shares, avg_cost, realized_pnl
+
+
+def _update_portfolio_value(db: Any) -> None:
+    """Recalculate latest portfolio_value total from positions."""
+    row = db.fetchone(
+        "SELECT id, cash FROM portfolio_value ORDER BY date DESC LIMIT 1"
+    )
+    if not row:
+        return
+    positions_value = db.fetchone(
+        "SELECT COALESCE(SUM(shares * avg_cost), 0) as val FROM positions"
+    )
+    total = (row["cash"] or 0) + (positions_value["val"] or 0)
+    cost_basis = db.fetchone(
+        "SELECT COALESCE(SUM(shares * avg_cost), 0) as cb FROM positions"
+    )
+    db.execute(
+        """UPDATE portfolio_value
+           SET total_value = ?, cost_basis = ?
+           WHERE id = ?""",
+        (total, cost_basis["cb"], row["id"]),
+    )
+
+
+@router.post("/trades/manual", response_model=ManualTradeResponse)
+async def create_manual_trade(
+    req: ManualTradeRequest,
+    engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
+) -> ManualTradeResponse:
+    """Log a manually-executed trade and update positions.
+
+    Inserts a trade record, updates the position (creating it if needed
+    for buys), recalculates avg_cost, and updates portfolio_value.
+
+    For sells, validates that sufficient shares exist before proceeding.
+    """
+    symbol = req.symbol.upper()
+    action = req.action.upper()
+    trade_date = req.date or datetime.now(UTC).strftime("%Y-%m-%d")
+    total_value = req.shares * req.price
+    realized_pnl: float | None = None
+
+    try:
+        db = engines.db
+        if action == "BUY":
+            new_shares, new_avg = _update_position_for_buy(
+                db, symbol, req.shares, req.price,
+                req.account_id, req.thesis_id,
+            )
+        else:
+            new_shares, new_avg, realized_pnl = _update_position_for_sell(
+                db, symbol, req.shares, req.price,
+            )
+
+        # Insert trade record
+        cursor = db.execute(
+            """INSERT INTO trades
+               (symbol, action, shares, price, total_value,
+                broker, account_id, realized_pnl, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                symbol, action, req.shares, req.price, total_value,
+                req.broker, req.account_id, realized_pnl, trade_date,
+            ),
+        )
+        trade_id = cursor.lastrowid
+
+        # Audit log
+        db.execute(
+            """INSERT INTO audit_log (actor, action, details, entity_type, entity_id)
+               VALUES ('api', 'manual_trade', ?, 'trade', ?)""",
+            (
+                f"{action} {req.shares} {symbol} @ ${req.price:.2f}"
+                + (f" | {req.notes}" if req.notes else ""),
+                trade_id,
+            ),
+        )
+
+        _update_portfolio_value(db)
+        db.connect().commit()
+
+        pnl_msg = ""
+        if realized_pnl is not None:
+            pnl_msg = f" | P/L: ${realized_pnl:+,.2f}"
+
+        return ManualTradeResponse(
+            trade_id=trade_id,
+            symbol=symbol,
+            action=action,
+            shares=req.shares,
+            price=req.price,
+            total_value=total_value,
+            position_shares=new_shares,
+            position_avg_cost=new_avg,
+            message=(
+                f"{action} {req.shares} {symbol} @ ${req.price:.2f}"
+                f" logged{pnl_msg}"
+            ),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to log manual trade: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to log manual trade: {str(e)}",
+        )
+
+
+@router.delete("/trades/{trade_id}")
+async def delete_trade(
+    trade_id: int,
+    engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
+) -> dict[str, str]:
+    """Undo a manual trade by reversing its position effect.
+
+    Reverses the position update (restores shares/avg_cost for buys,
+    adds shares back for sells) and deletes the trade record.
+    """
+    try:
+        db = engines.db
+        trade = db.fetchone(
+            "SELECT * FROM trades WHERE id = ?", (trade_id,)
+        )
+        if not trade:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Trade {trade_id} not found",
+            )
+
+        symbol = trade["symbol"]
+        action = trade["action"]
+        shares = trade["shares"]
+        price = trade["price"]
+
+        pos = db.fetchone(
+            "SELECT id, shares, avg_cost FROM positions WHERE symbol = ?",
+            (symbol,),
+        )
+
+        if action == "BUY":
+            # Reverse a buy: subtract shares
+            if pos and pos["shares"] >= shares:
+                remaining = pos["shares"] - shares
+                if remaining > 0:
+                    # Reverse weighted average
+                    total_cost = pos["shares"] * pos["avg_cost"]
+                    new_cost = total_cost - shares * price
+                    new_avg = new_cost / remaining
+                    db.execute(
+                        """UPDATE positions
+                           SET shares = ?, avg_cost = ?,
+                               updated_at = datetime('now')
+                           WHERE id = ?""",
+                        (remaining, new_avg, pos["id"]),
+                    )
+                else:
+                    db.execute(
+                        """UPDATE positions
+                           SET shares = 0, updated_at = datetime('now')
+                           WHERE id = ?""",
+                        (pos["id"],),
+                    )
+        elif action == "SELL":
+            # Reverse a sell: add shares back at original avg_cost
+            if pos:
+                new_shares = pos["shares"] + shares
+                db.execute(
+                    """UPDATE positions
+                       SET shares = ?, updated_at = datetime('now')
+                       WHERE id = ?""",
+                    (new_shares, pos["id"]),
+                )
+            else:
+                db.execute(
+                    """INSERT INTO positions
+                       (symbol, shares, avg_cost, side)
+                       VALUES (?, ?, ?, 'long')""",
+                    (symbol, shares, price),
+                )
+
+        db.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
+
+        db.execute(
+            """INSERT INTO audit_log
+               (actor, action, details, entity_type, entity_id)
+               VALUES ('api', 'trade_deleted', ?, 'trade', ?)""",
+            (f"Reversed {action} {shares} {symbol} @ ${price:.2f}", trade_id),
+        )
+
+        _update_portfolio_value(db)
+        db.connect().commit()
+
+        return {"message": f"Trade {trade_id} deleted and position reversed"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to delete trade %s: %s", trade_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete trade: {str(e)}",
         )

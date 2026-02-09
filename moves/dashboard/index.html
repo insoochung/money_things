@@ -102,7 +102,42 @@
 
   <!-- 9. Positions Table -->
   <section class="section" id="section-positions">
-    <h2 class="section-title">Positions</h2>
+    <h2 class="section-title">Positions <button class="btn-add" id="log-trade-btn">+ Log Trade</button></h2>
+    <!-- Log Trade Modal -->
+    <div id="trade-form-container" class="trade-form-container" style="display:none">
+      <div class="card" style="padding:16px;margin-bottom:16px">
+        <div class="thesis-edit-form" style="display:flex">
+          <div style="display:flex;gap:8px;align-items:center">
+            <label style="flex:0">
+              <select id="tf-action" class="tf-action">
+                <option value="BUY">BUY</option>
+                <option value="SELL">SELL</option>
+              </select>
+            </label>
+            <label>Symbol<input type="text" id="tf-symbol" placeholder="META" style="max-width:100px;text-transform:uppercase"></label>
+            <label>Shares<input type="number" id="tf-shares" step="1" min="1" placeholder="10" style="max-width:100px"></label>
+            <label>Price<input type="number" id="tf-price" step="0.01" min="0.01" placeholder="650.00" style="max-width:120px"></label>
+            <label>Date<input type="date" id="tf-date"></label>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <label>Broker
+              <select id="tf-broker">
+                <option value="">—</option>
+                <option value="Schwab">Schwab</option>
+                <option value="E*Trade">E*Trade</option>
+                <option value="Fidelity">Fidelity</option>
+                <option value="IBKR">IBKR</option>
+                <option value="Other">Other</option>
+              </select>
+            </label>
+            <label>Thesis<select id="tf-thesis"><option value="">—</option></select></label>
+            <label>Notes<input type="text" id="tf-notes" placeholder="Optional" style="min-width:140px"></label>
+            <button class="btn-save" id="tf-submit">Submit</button>
+          </div>
+        </div>
+        <div id="tf-feedback" style="margin-top:8px;font-size:13px"></div>
+      </div>
+    </div>
     <div class="table-wrapper">
       <table id="positions-table">
         <thead>

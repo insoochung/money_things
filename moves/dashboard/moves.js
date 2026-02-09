@@ -1317,8 +1317,87 @@
     }
   }
 
+  // ── Manual Trade Form ──
+  function initTradeForm() {
+    const btn = $('#log-trade-btn');
+    const container = $('#trade-form-container');
+    if (!btn || !container) return;
+
+    // Set default date to today
+    const dateInput = $('#tf-date');
+    if (dateInput) dateInput.value = new Date().toISOString().split('T')[0];
+
+    // Populate thesis dropdown
+    api('/api/fund/theses').then(d => {
+      const sel = $('#tf-thesis');
+      const arr = Array.isArray(d) ? d : d.theses || [];
+      arr.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.title;
+        sel.appendChild(opt);
+      });
+    }).catch(() => {});
+
+    btn.addEventListener('click', () => {
+      container.style.display = container.style.display === 'none' ? 'block' : 'none';
+    });
+
+    $('#tf-submit').addEventListener('click', submitManualTrade);
+  }
+
+  async function submitManualTrade() {
+    const fb = $('#tf-feedback');
+    const btn = $('#tf-submit');
+    const symbol = ($('#tf-symbol').value || '').trim().toUpperCase();
+    const shares = parseFloat($('#tf-shares').value);
+    const price = parseFloat($('#tf-price').value);
+    if (!symbol || isNaN(shares) || isNaN(price) || shares <= 0 || price <= 0) {
+      fb.innerHTML = '<span class="negative">Symbol, shares, and price required</span>';
+      return;
+    }
+    const body = {
+      symbol,
+      action: $('#tf-action').value,
+      shares,
+      price,
+      date: $('#tf-date').value || null,
+      broker: $('#tf-broker').value || '',
+      thesis_id: $('#tf-thesis').value ? parseInt($('#tf-thesis').value) : null,
+      notes: $('#tf-notes').value || '',
+    };
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+    fb.innerHTML = '';
+    try {
+      const r = await fetch('/api/fund/trades/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || r.status);
+      fb.innerHTML = `<span class="positive">✓ ${d.message}</span>`;
+      // Clear form
+      $('#tf-symbol').value = '';
+      $('#tf-shares').value = '';
+      $('#tf-price').value = '';
+      $('#tf-notes').value = '';
+      // Refresh positions and trades
+      loadPositions();
+      loadTrades();
+      loadSummary();
+    } catch (e) {
+      fb.innerHTML = `<span class="negative">✗ ${e.message}</span>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Submit';
+    }
+  }
+
   async function init() {
     initTheme();
+    initTradeForm();
     updateTimestamp();
 
     // Load all sections in parallel
