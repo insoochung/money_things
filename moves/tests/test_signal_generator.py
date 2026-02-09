@@ -418,3 +418,111 @@ def test_build_reasoning_includes_factors(seeded_db):
     assert "positive news sentiment" in reasoning
     assert "congress buying aligned" in reasoning
     assert "0.72" in reasoning
+
+
+# --- Congress Scoring Integration ---
+
+
+def _seed_congress_data(db, symbol="NVDA"):
+    """Seed congress_trades and politician_scores for testing."""
+    # Ensure politician_scores table exists
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS politician_scores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            politician TEXT UNIQUE NOT NULL,
+            total_trades INTEGER DEFAULT 0,
+            win_rate REAL DEFAULT 0,
+            score REAL DEFAULT 0,
+            tier TEXT DEFAULT 'unknown',
+            trade_size_preference TEXT,
+            filing_delay_avg_days REAL DEFAULT 0,
+            committees TEXT DEFAULT '[]',
+            best_sectors TEXT DEFAULT '[]',
+            avg_return_90d REAL,
+            last_updated TEXT
+        )
+    """)
+    db.connect().commit()
+
+    traded_date = (datetime.now(UTC) - timedelta(days=10)).strftime("%Y-%m-%d")
+    filed_date = (datetime.now(UTC) - timedelta(days=5)).strftime("%Y-%m-%d")
+
+    db.execute(
+        """INSERT INTO congress_trades
+           (politician, symbol, action, amount_range, date_traded, date_filed)
+           VALUES (?, ?, 'buy', '$100,001 - $250,000', ?, ?)""",
+        ("Nancy Pelosi", symbol, traded_date, filed_date),
+    )
+    db.execute(
+        """INSERT INTO congress_trades
+           (politician, symbol, action, amount_range, date_traded, date_filed)
+           VALUES (?, ?, 'buy', '$50,001 - $100,000', ?, ?)""",
+        ("Dan Crenshaw", symbol, traded_date, filed_date),
+    )
+    db.execute(
+        """INSERT INTO politician_scores
+           (politician, total_trades, win_rate, score, tier, committees)
+           VALUES ('Nancy Pelosi', 50, 72.0, 85.0, 'whale', '["Financial Services"]')""",
+    )
+    db.execute(
+        """INSERT INTO politician_scores
+           (politician, total_trades, win_rate, score, tier, committees)
+           VALUES ('Dan Crenshaw', 20, 55.0, 48.0, 'average', '["Armed Services"]')""",
+    )
+    db.connect().commit()
+
+
+def test_congress_alignment_uses_scorer(seeded_db):
+    """Congress alignment should use PoliticianScorer.score_trade() for weighting."""
+    _seed_mature_thesis(seeded_db)
+    _seed_congress_data(seeded_db, "NVDA")
+    sg = _make_generator(seeded_db)
+
+    score = sg._get_congress_alignment("NVDA")
+    # Both trades are buys → score should be > 0.5 (bullish)
+    assert score > 0.5
+    assert score <= 1.0
+
+
+def test_congress_alignment_no_trades(seeded_db):
+    """No congress trades → neutral 0.5."""
+    _seed_mature_thesis(seeded_db)
+    sg = _make_generator(seeded_db)
+    assert sg._get_congress_alignment("AAPL") == 0.5
+
+
+def test_congress_reasoning_with_trades(seeded_db):
+    """Congress reasoning should include enriched trade details."""
+    _seed_mature_thesis(seeded_db)
+    _seed_congress_data(seeded_db, "NVDA")
+    sg = _make_generator(seeded_db)
+
+    reasoning = sg._get_congress_reasoning("NVDA")
+    assert reasoning is not None
+    assert "Pelosi" in reasoning
+    assert "NVDA" in reasoning
+
+
+def test_congress_reasoning_no_trades(seeded_db):
+    """No recent trades → None."""
+    _seed_mature_thesis(seeded_db)
+    sg = _make_generator(seeded_db)
+    assert sg._get_congress_reasoning("AAPL") is None
+
+
+def test_signal_reasoning_includes_congress(seeded_db):
+    """Full signal reasoning should include congress detail when available."""
+    _seed_mature_thesis(seeded_db)
+    _seed_congress_data(seeded_db, "NVDA")
+    sg = _make_generator(seeded_db)
+    thesis = sg.thesis_engine.get_thesis(1)
+
+    mf = MultiFactorScore(
+        thesis_conviction=0.8,
+        congress_alignment=0.8,
+        weighted_total=0.72,
+    )
+
+    reasoning = sg._build_reasoning("BUY", "NVDA", thesis, None, mf)
+    assert "Congress:" in reasoning
+    assert "Pelosi" in reasoning

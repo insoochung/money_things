@@ -345,7 +345,7 @@ class TestGenerateSignals:
         assert len(signals) == 1
         assert signals[0].symbol == "NVDA"
         assert signals[0].action.value == "BUY"
-        assert signals[0].confidence == 0.3
+        assert signals[0].confidence == 0.45  # "notable" tier from $1M+ trade
         assert signals[0].source.value == "congress_trade"
 
     def test_no_signals_for_sells(self, congress_engine_with_signals):
@@ -370,6 +370,61 @@ class TestGenerateSignals:
     def test_no_signals_without_engine(self, congress_engine):
         """Returns empty list when no signal_engine is configured."""
         assert congress_engine.generate_signals(DEFAULT_USER_ID) == []
+
+
+class TestPoliticianScoreRefresh:
+    """Tests for politician score refresh on trade ingestion."""
+
+    def test_store_trades_refreshes_scores(self, congress_engine):
+        """Storing trades triggers politician score calculation."""
+        # Insert enough trades for a politician to get scored
+        trades = []
+        for i in range(5):
+            trades.append({
+                "politician": "Pelosi",
+                "symbol": "NVDA",
+                "action": "buy",
+                "amount_range": "$1,000,001 - $5,000,000",
+                "date_filed": f"2026-01-{15 + i}",
+                "date_traded": f"2026-01-{10 + i}",
+                "source_url": "",
+            })
+        congress_engine.store_trades(trades)
+
+        # Check that politician_scores was populated
+        row = congress_engine.db.fetchone(
+            "SELECT * FROM politician_scores WHERE politician = 'Pelosi'"
+        )
+        assert row is not None
+        assert row["score"] > 0
+
+    def test_refresh_all_scores(self, congress_engine):
+        """refresh_all_scores rescores all politicians."""
+        # Store trades for two politicians
+        trades = [
+            {
+                "politician": "Pelosi",
+                "symbol": "NVDA",
+                "action": "buy",
+                "amount_range": "$1M+",
+                "date_filed": "2026-01-15",
+                "date_traded": "2026-01-10",
+                "source_url": "",
+            },
+            {
+                "politician": "Crenshaw",
+                "symbol": "MSFT",
+                "action": "buy",
+                "amount_range": "$100K",
+                "date_filed": "2026-01-15",
+                "date_traded": "2026-01-10",
+                "source_url": "",
+            },
+        ]
+        congress_engine.store_trades(trades)
+
+        count = congress_engine.refresh_all_scores()
+        assert count >= 2
 
 
 class TestGetSummary:

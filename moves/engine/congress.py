@@ -281,8 +281,27 @@ class CongressTradesEngine:
 
         if inserted:
             self.db.connect().commit()
+            # Refresh politician scores after new trades
+            self._refresh_politician_scores(trades)
         logger.info("Stored %d new congress trades (of %d fetched)", inserted, len(trades))
         return inserted
+
+    def _refresh_politician_scores(self, trades: list[dict]) -> None:
+        """Refresh politician scores for politicians seen in the batch."""
+        politicians = {
+            t.get("politician") or t.get("member_name", "") for t in trades
+        }
+        for name in politicians:
+            if name:
+                try:
+                    self.scorer.score_politician(name)
+                except Exception:
+                    logger.warning("Failed to score politician: %s", name, exc_info=True)
+
+    def refresh_all_scores(self) -> int:
+        """Re-score all politicians with trades. Returns count scored."""
+        scores = self.scorer.score_all()
+        return len(scores)
 
     def check_overlap(self, user_id: int) -> list[dict]:
         """Cross-reference congress trades with a user's positions and thesis symbols.

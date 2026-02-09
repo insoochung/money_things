@@ -34,6 +34,7 @@ from pydantic import BaseModel
 
 from db.database import Database
 from engine import Signal, SignalAction, SignalSource, SignalStatus, ThesisStatus
+from engine.congress_scoring import PoliticianScorer
 from engine.earnings_calendar import is_earnings_imminent
 from engine.risk import RiskManager
 from engine.signals import SignalEngine
@@ -137,6 +138,7 @@ class SignalGenerator:
         self.risk_manager = risk_manager
         self.pricing = pricing
         self.user_id = user_id
+        self._politician_scorer: PoliticianScorer | None = None
 
     def run_scan(self) -> list[dict]:
         """Main scan loop. Called by scheduler.
@@ -558,11 +560,19 @@ class SignalGenerator:
         win_rate = row["wins"] / row["total"]
         return round(min(1.0, win_rate), 4)
 
+    @property
+    def politician_scorer(self) -> PoliticianScorer:
+        """Lazy-init PoliticianScorer (avoids table creation in tests that don't need it)."""
+        if self._politician_scorer is None:
+            self._politician_scorer = PoliticianScorer(self.db)
+        return self._politician_scorer
+
     def _get_congress_alignment(self, symbol: str) -> float:
         """Get congress trade alignment score for a symbol.
 
-        Checks recent congress trades (last 90 days) for the symbol.
-        More buys from high-tier politicians = higher score.
+        Uses PoliticianScorer.score_trade() to weight each recent congress
+        trade by politician quality, trade size, committee relevance, and
+        stock-vs-ETF. Falls back to neutral 0.5 if no data.
 
         Args:
             symbol: Ticker symbol.
@@ -575,10 +585,8 @@ class SignalGenerator:
         ).strftime("%Y-%m-%d")
 
         rows = self.db.fetchall(
-            """SELECT ct.action, ps.score as pol_score
+            """SELECT ct.*
                FROM congress_trades ct
-               LEFT JOIN politician_scores ps
-                 ON ct.politician = ps.politician
                WHERE ct.symbol = ?
                  AND ct.date_traded >= ?""",
             (symbol.upper(), ninety_days_ago),
@@ -587,15 +595,22 @@ class SignalGenerator:
         if not rows:
             return 0.5  # Neutral
 
+        try:
+            scorer = self.politician_scorer
+        except Exception:
+            logger.debug("congress_scoring unavailable, returning neutral")
+            return 0.5
+
         buy_signal = 0.0
         total_weight = 0.0
         for row in rows:
-            pol_score = (row["pol_score"] or 50) / 100.0
-            if row["action"] == "buy":
-                buy_signal += pol_score
+            trade = dict(row)
+            trade_score = scorer.score_trade(trade)
+            if trade.get("action") == "buy":
+                buy_signal += trade_score
             else:
-                buy_signal -= pol_score * 0.5
-            total_weight += pol_score
+                buy_signal -= trade_score * 0.5
+            total_weight += trade_score
 
         if total_weight == 0:
             return 0.5
@@ -603,6 +618,42 @@ class SignalGenerator:
         # Normalize to 0.0–1.0
         raw = 0.5 + (buy_signal / total_weight) * 0.5
         return round(min(1.0, max(0.0, raw)), 4)
+
+    def _get_congress_reasoning(self, symbol: str) -> str | None:
+        """Get enriched reasoning for recent congress trades on a symbol.
+
+        Args:
+            symbol: Ticker symbol.
+
+        Returns:
+            Reasoning string or None if no relevant trades.
+        """
+        thirty_days_ago = (
+            datetime.now(UTC) - timedelta(days=30)
+        ).strftime("%Y-%m-%d")
+
+        rows = self.db.fetchall(
+            """SELECT ct.*
+               FROM congress_trades ct
+               WHERE ct.symbol = ?
+                 AND ct.date_traded >= ?
+               ORDER BY ct.date_traded DESC
+               LIMIT 3""",
+            (symbol.upper(), thirty_days_ago),
+        )
+
+        if not rows:
+            return None
+
+        try:
+            scorer = self.politician_scorer
+            parts = []
+            for row in rows:
+                enriched = scorer.enrich_trade(dict(row))
+                parts.append(scorer.build_reasoning(enriched))
+            return " | ".join(parts)
+        except Exception:
+            return None
 
     def _check_price_triggers(
         self, symbol: str, thesis: Any,
@@ -843,6 +894,11 @@ class SignalGenerator:
             parts.append(
                 f"Multi-factor score: {mf_score.weighted_total:.2f}"
             )
+
+        # Append enriched congress reasoning if available
+        congress_detail = self._get_congress_reasoning(symbol)
+        if congress_detail:
+            parts.append(f"Congress: {congress_detail}")
 
         return ". ".join(parts) + "."
 
