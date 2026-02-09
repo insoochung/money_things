@@ -19,16 +19,30 @@ Dependencies:
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi import status as http_status
 from pydantic import BaseModel, Field
 
 from api.auth import get_current_user
 from api.deps import get_engines
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_json_list(raw: str | None) -> list[str]:
+    """Parse a DB field that might be JSON array or comma-separated text."""
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        return list(parsed) if isinstance(parsed, list) else [str(parsed)]
+    except (json.JSONDecodeError, TypeError):
+        return [s.strip() for s in raw.split(",") if s.strip()]
+
 
 router = APIRouter()
 
@@ -265,17 +279,16 @@ async def list_theses(
             signals_rejected = signals["rejected"] or 0 if signals else 0
 
             # Parse JSON fields
-            import json
 
-            symbols = json.loads(thesis["symbols"]) if thesis["symbols"] else []
+            symbols = _safe_json_list(thesis["symbols"])
             universe_keywords = (
-                json.loads(thesis["universe_keywords"]) if thesis["universe_keywords"] else []
+                _safe_json_list(thesis["universe_keywords"])
             )
             validation_criteria = (
-                json.loads(thesis["validation_criteria"]) if thesis["validation_criteria"] else []
+                _safe_json_list(thesis["validation_criteria"])
             )
             failure_criteria = (
-                json.loads(thesis["failure_criteria"]) if thesis["failure_criteria"] else []
+                _safe_json_list(thesis["failure_criteria"])
             )
 
             result.append(
@@ -308,7 +321,7 @@ async def list_theses(
     except Exception as e:
         logger.error("Failed to list theses: %s", e)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to list theses: {str(e)}",
         )
 
@@ -360,22 +373,21 @@ async def create_thesis(
 
         if not thesis:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to retrieve created thesis",
             )
 
         # Parse JSON fields
-        import json
 
-        symbols = json.loads(thesis["symbols"]) if thesis["symbols"] else []
+        symbols = _safe_json_list(thesis["symbols"])
         universe_keywords = (
-            json.loads(thesis["universe_keywords"]) if thesis["universe_keywords"] else []
+            _safe_json_list(thesis["universe_keywords"])
         )
         validation_criteria = (
-            json.loads(thesis["validation_criteria"]) if thesis["validation_criteria"] else []
+            _safe_json_list(thesis["validation_criteria"])
         )
         failure_criteria = (
-            json.loads(thesis["failure_criteria"]) if thesis["failure_criteria"] else []
+            _safe_json_list(thesis["failure_criteria"])
         )
 
         # Return response (new thesis has no positions/signals yet)
@@ -405,7 +417,7 @@ async def create_thesis(
     except Exception as e:
         logger.error("Failed to create thesis: %s", e)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create thesis: {str(e)}",
         )
 
@@ -487,19 +499,19 @@ async def edit_thesis_fields(
     updated = engines.db.fetchone(
         "SELECT * FROM theses WHERE id = ?", (thesis_id,)
     )
-    symbols = json.loads(updated["symbols"]) if updated["symbols"] else []
+    symbols = _safe_json_list(updated["symbols"])
     universe_keywords = (
-        json.loads(updated["universe_keywords"])
+        _safe_json_list(updated["universe_keywords"])
         if updated["universe_keywords"]
         else []
     )
     validation_criteria = (
-        json.loads(updated["validation_criteria"])
+        _safe_json_list(updated["validation_criteria"])
         if updated["validation_criteria"]
         else []
     )
     failure_criteria = (
-        json.loads(updated["failure_criteria"])
+        _safe_json_list(updated["failure_criteria"])
         if updated["failure_criteria"]
         else []
     )
@@ -562,7 +574,7 @@ async def update_thesis(
 
         if not thesis:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"Thesis {thesis_id} not found"
+                status_code=http_status.HTTP_404_NOT_FOUND, detail=f"Thesis {thesis_id} not found"
             )
 
         # Use ThesisEngine to transition status
@@ -640,21 +652,20 @@ async def update_thesis(
         signals_rejected = signals["rejected"] or 0 if signals else 0
 
         # Parse JSON fields
-        import json
 
-        symbols = json.loads(updated_thesis["symbols"]) if updated_thesis["symbols"] else []
+        symbols = _safe_json_list(updated_thesis["symbols"])
         universe_keywords = (
-            json.loads(updated_thesis["universe_keywords"])
+            _safe_json_list(updated_thesis["universe_keywords"])
             if updated_thesis["universe_keywords"]
             else []
         )
         validation_criteria = (
-            json.loads(updated_thesis["validation_criteria"])
+            _safe_json_list(updated_thesis["validation_criteria"])
             if updated_thesis["validation_criteria"]
             else []
         )
         failure_criteria = (
-            json.loads(updated_thesis["failure_criteria"])
+            _safe_json_list(updated_thesis["failure_criteria"])
             if updated_thesis["failure_criteria"]
             else []
         )
@@ -687,7 +698,7 @@ async def update_thesis(
     except Exception as e:
         logger.error("Failed to update thesis %s: %s", thesis_id, e)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update thesis: {str(e)}",
         )
 
@@ -776,7 +787,6 @@ async def list_shared_theses(
                ORDER BY st.shared_at DESC""",
             (user["id"],),
         )
-        import json
 
         result = []
         for row in rows:
@@ -787,7 +797,7 @@ async def list_shared_theses(
                     "title": row["title"],
                     "thesis_text": row["thesis_text"],
                     "strategy": row["strategy"],
-                    "symbols": json.loads(row["symbols"]) if row["symbols"] else [],
+                    "symbols": _safe_json_list(row["symbols"]),
                     "conviction": row["conviction"],
                     "horizon": row["horizon"],
                     "shared_by": row["shared_by_name"],

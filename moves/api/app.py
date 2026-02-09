@@ -332,6 +332,18 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Global exception handler for debugging
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request, exc):
+        import traceback
+        logger.error("Unhandled error on %s: %s", request.url.path, exc)
+        logger.error("Traceback:\n%s", traceback.format_exc())
+        from starlette.responses import JSONResponse
+        return JSONResponse(
+            status_code=500,
+            content={"detail": str(exc)},
+        )
+
     # CORS middleware for dashboard
     app.add_middleware(
         CORSMiddleware,

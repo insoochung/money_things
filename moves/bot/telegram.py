@@ -115,29 +115,6 @@ def _signal_keyboard(signal_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def _parse_onboard_answers(raw: str, questions: list[dict]) -> dict[str, str]:
-    """Parse numbered answers into a dict keyed by question ID.
-
-    Supports formats like "1. Answer 2. Answer" or "1) Answer 2) Answer".
-
-    Args:
-        raw: Raw text with numbered answers.
-        questions: List of question dicts with 'id' keys.
-
-    Returns:
-        Dict mapping question IDs to answers.
-    """
-    import re
-
-    parts = re.split(r"\d+[\.\)]\s*", raw)
-    parts = [p.strip() for p in parts if p.strip()]
-    answers: dict[str, str] = {}
-    for i, part in enumerate(parts):
-        if i < len(questions):
-            answers[questions[i]["id"]] = part
-    return answers
-
-
 class MoneyMovesBot:
     """Telegram bot for signal approval and portfolio status.
 
@@ -177,11 +154,9 @@ class MoneyMovesBot:
         self.app.add_handler(CommandHandler("killswitch", self.cmd_killswitch))
         self.app.add_handler(CommandHandler("mode", self.cmd_mode))
         self.app.add_handler(CommandHandler("think", self.cmd_think))
+        self.app.add_handler(CommandHandler("note", self.cmd_note))
         self.app.add_handler(CommandHandler("journal", self.cmd_journal))
-        self.app.add_handler(CommandHandler("review", self.cmd_review))
-        self.app.add_handler(CommandHandler("thought", self.cmd_thought))
-        self.app.add_handler(CommandHandler("research", self.cmd_research))
-        self.app.add_handler(CommandHandler("onboard", self.cmd_onboard))
+        self.app.add_handler(CommandHandler("brief", self.cmd_brief))
         self.app.add_handler(CallbackQueryHandler(self._handle_callback))
 
         await self.app.initialize()
@@ -338,23 +313,20 @@ class MoneyMovesBot:
         """Handle /start and /help — show available commands."""
         mode_label = "Mock" if self.mode == Mode.MOCK else "Live"
         text = (
-            "💰 *Money Moves* — Investment Engine\n"
+            "💰 *Munny Thoughts* — Investment Engine\n"
             f"Mode: {mode_label}\n\n"
-            "*Commands:*\n"
+            "*Journal:*\n"
+            "/think <idea> — Research & develop thesis\n"
+            "/note <text> — Quick observation\n"
+            "/journal — Recent sessions & theses\n"
+            "/brief — Daily briefing with live prices\n\n"
+            "*Portfolio:*\n"
             "/status — NAV, returns, exposure\n"
-            "/positions — Open positions summary\n"
-            "/killswitch — Toggle emergency trading halt\n"
-            "/mode — Show current mode\n"
+            "/positions — Open positions\n"
+            "/killswitch — Emergency trading halt\n"
+            "/mode — Current mode\n"
             "/help — This message\n\n"
-            "*Research (Thoughts):*\n"
-            "/think <thesis> — Start research session\n"
-            "/journal — List thought threads\n"
-            "/review <symbol> — Research take on symbol\n"
-            "/thought <text> — Quick observation\n"
-            "/research <symbol> — Deep-dive research\n"
-            "/onboard — Investor profile setup\n\n"
-            "Signal notifications appear here with "
-            "Approve/Reject buttons when generated."
+            "Signals appear with Approve/Reject buttons."
         )
         await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -363,105 +335,90 @@ class MoneyMovesBot:
         mode_label = "Mock" if self.mode == Mode.MOCK else "Live"
         await update.message.reply_text(f"Mode: {mode_label}")
 
-    # --- Thoughts integration ---
+    # --- Thoughts integration (3 commands + brief) ---
 
-    async def _run_thoughts_cmd(
-        self, coro_factory: str, arg: str, update: Update
+    def _get_thoughts_commands(self) -> tuple:
+        """Import and return the thoughts commands module."""
+        import sys
+        thoughts_path = "/root/workspace/money/thoughts"
+        if thoughts_path not in sys.path:
+            sys.path.insert(0, thoughts_path)
+        from commands import cmd_brief, cmd_journal, cmd_note, cmd_think
+        return cmd_think, cmd_note, cmd_journal, cmd_brief
+
+    async def cmd_think(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
-        """Run a thoughts command and reply with the result.
+        """Handle /think <idea> — research and develop a thesis.
 
-        Args:
-            coro_factory: Name of the async function in thoughts.commands.
-            arg: Argument to pass to the command.
-            update: Telegram update for replying.
+        Returns the status message immediately, then the task string
+        is available for Munny to spawn a sub-agent.
         """
-        try:
-            import sys
-
-            sys.path.insert(0, "/root/.openclaw/workspace/money")
-            from thoughts import commands as tc
-
-            func = getattr(tc, coro_factory)
-            result = func(arg) if arg else func()
-            await update.message.reply_text(result)
-        except Exception as e:
-            logger.exception("Thoughts command error: %s", e)
-            await update.message.reply_text(f"⚠️ Thoughts error: {e}")
-
-    async def cmd_think(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /think <thesis> — spawn a research session."""
         args = " ".join(context.args) if context.args else ""
         if not args:
-            await update.message.reply_text("Usage: /think <thesis name or ID>")
+            await update.message.reply_text(
+                "Usage: /think <thesis name, ID, or new idea>"
+            )
             return
-        await self._run_thoughts_cmd("cmd_think", args, update)
-
-    async def cmd_journal(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /journal — list active thought threads."""
-        arg = context.args[0] if context.args else None
         try:
-            thesis_id = int(arg) if arg else None
-        except ValueError:
-            thesis_id = None
+            cmd_think_fn, _, _, _ = self._get_thoughts_commands()
+            result = cmd_think_fn(args)
+            await update.message.reply_text(result["message"])
+            # Store task for Munny to pick up via heartbeat/cron
+            if result.get("task"):
+                logger.info(
+                    "Think task ready for thesis_id=%s (new=%s)",
+                    result.get("thesis_id"), result.get("is_new"),
+                )
+        except Exception as e:
+            logger.exception("Think error: %s", e)
+            await update.message.reply_text(f"⚠️ Error: {e}")
+
+    async def cmd_note(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """Handle /note <text> — quick observation, auto-tagged."""
+        text = " ".join(context.args) if context.args else ""
+        if not text:
+            await update.message.reply_text("Usage: /note <your observation>")
+            return
         try:
-            import sys
+            _, cmd_note_fn, _, _ = self._get_thoughts_commands()
+            result = cmd_note_fn(text)
+            await update.message.reply_text(result)
+        except Exception as e:
+            logger.exception("Note error: %s", e)
+            await update.message.reply_text(f"⚠️ Error: {e}")
 
-            sys.path.insert(0, "/root/.openclaw/workspace/money")
-            from thoughts import commands as tc
-
-            result = tc.cmd_journal(thesis_id)
+    async def cmd_journal(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """Handle /journal — read-only view of theses, sessions, notes."""
+        try:
+            _, _, cmd_journal_fn, _ = self._get_thoughts_commands()
+            result = cmd_journal_fn()
             await update.message.reply_text(result)
         except Exception as e:
             logger.exception("Journal error: %s", e)
             await update.message.reply_text(f"⚠️ Error: {e}")
 
-    async def cmd_review(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /review <symbol> — get research take on a symbol."""
-        if not context.args:
-            await update.message.reply_text("Usage: /review <SYMBOL>")
-            return
-        await self._run_thoughts_cmd("cmd_review", context.args[0].upper(), update)
-
-    async def cmd_thought(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /thought <text> — capture a quick thought."""
-        text = " ".join(context.args) if context.args else ""
-        if not text:
-            await update.message.reply_text("Usage: /thought <your observation>")
-            return
-        await self._run_thoughts_cmd("cmd_thought", text, update)
-
-    async def cmd_onboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /onboard — investor profile onboarding.
-
-        Without args: shows interview questions.
-        With numbered answers: generates and saves profile.
-        """
-        raw = " ".join(context.args) if context.args else ""
+    async def cmd_brief(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """Handle /brief — daily briefing with live prices."""
         try:
-            import sys
-
-            sys.path.insert(0, "/root/.openclaw/workspace/money")
-            from thoughts import commands as tc
-            from thoughts.onboard import INTERVIEW_QUESTIONS
-
-            if not raw:
-                result = tc.cmd_onboard()
-                await update.message.reply_text(result, parse_mode="Markdown")
-                return
-
-            answers = _parse_onboard_answers(raw, INTERVIEW_QUESTIONS)
-            result = tc.cmd_onboard(answers)
-            await update.message.reply_text(result)
+            await update.message.reply_text("📊 Fetching live data...")
+            _, _, _, cmd_brief_fn = self._get_thoughts_commands()
+            result = cmd_brief_fn()
+            # Split if too long for Telegram (4096 char limit)
+            if len(result) > 4000:
+                for i in range(0, len(result), 4000):
+                    await update.message.reply_text(result[i:i + 4000])
+            else:
+                await update.message.reply_text(result)
         except Exception as e:
-            logger.exception("Onboard error: %s", e)
-            await update.message.reply_text(f"⚠️ Onboard error: {e}")
-
-    async def cmd_research(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /research <symbol> — trigger deep-dive research."""
-        if not context.args:
-            await update.message.reply_text("Usage: /research <SYMBOL>")
-            return
-        await self._run_thoughts_cmd("cmd_research", context.args[0].upper(), update)
+            logger.exception("Brief error: %s", e)
+            await update.message.reply_text(f"⚠️ Error: {e}")
 
     # --- Signal expiry ---
 
