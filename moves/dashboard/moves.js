@@ -173,9 +173,13 @@
             <span class="thesis-symbols">${(t.symbols || t.tickers || []).join(', ')}</span>
           </div>
           <div class="thesis-body">
-            <p>${t.description || t.text || ''}</p>
-            ${t.criteria ? `<p><strong>Criteria:</strong> ${t.criteria}</p>` : ''}
-            ${t.news_matches ? `<p><strong>News:</strong> ${t.news_matches}</p>` : ''}
+            <p>${t.thesis_text || t.description || ''}</p>
+            ${t.horizon ? `<p><strong>Horizon:</strong> ${t.horizon}</p>` : ''}
+            ${t.conviction != null ? `<p><strong>Conviction:</strong> ${Math.round(t.conviction * 100)}%</p>` : ''}
+            ${t.validation_criteria?.length ? `<p><strong>Validation:</strong> ${t.validation_criteria.join('; ')}</p>` : ''}
+            ${t.failure_criteria?.length ? `<p><strong>Failure:</strong> ${t.failure_criteria.join('; ')}</p>` : ''}
+            ${t.positions_count ? `<p><strong>Positions:</strong> ${t.positions_count} · Value: $${fmt(t.total_value)} · P&L: $${fmt(t.unrealized_pnl)}</p>` : ''}
+            ${t.signals_pending ? `<p><strong>Pending signals:</strong> ${t.signals_pending}</p>` : ''}
           </div>
         </div>`
       ).join('');
