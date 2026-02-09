@@ -258,7 +258,7 @@ class SignalGenerator:
             return None
 
         # Compute position size
-        nav = self.risk_manager._get_nav(self.user_id)
+        nav = self.risk_manager._get_nav()
         size_pct = self._compute_position_size(symbol, confidence, nav)
 
         signal_action = SignalAction.BUY if action == "BUY" else SignalAction.SELL
@@ -276,7 +276,7 @@ class SignalGenerator:
         )
 
         # Run pre-trade risk check
-        risk_result = self.risk_manager.pre_trade_check(signal, self.user_id)
+        risk_result = self.risk_manager.pre_trade_check(signal)
         if not risk_result:
             logger.info(
                 "signal_scan: %s %s blocked by risk: %s",
@@ -323,7 +323,7 @@ class SignalGenerator:
         size = _BASE_POSITION_SIZE * confidence * 2
         # Cap at risk limit
         max_pct = self.risk_manager._get_limit(
-            "max_position_pct", 0.15, self.user_id
+            "max_position_pct", 0.15
         )
         return min(size, max_pct)
 

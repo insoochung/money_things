@@ -1,6 +1,7 @@
 """Position reconciliation between local database and broker.
 
-All methods now accept user_id for multi-user scoping.
+Compares DB-tracked positions against the broker's reported positions to detect
+and optionally fix discrepancies. Designed to run as a daily scheduled check.
 """
 
 from __future__ import annotations
@@ -27,17 +28,28 @@ def _audit(db: Database, action: str, detail: str) -> None:
 
 
 class Reconciler:
-    """Reconcile DB positions with broker positions."""
+    """Reconcile DB positions with broker positions.
+
+    Detects share count mismatches, positions missing from either side,
+    and can auto-sync minor discrepancies (rounding differences).
+
+    Attributes:
+        db: Database instance for local position data.
+        broker: Broker instance for fetching live positions.
+    """
 
     def __init__(self, db: Database, broker: Any) -> None:
+        """Initialize the reconciler.
+
+        Args:
+            db: Database instance.
+            broker: Broker for fetching live positions.
+        """
         self.db = db
         self.broker = broker
 
-    async def reconcile(self, user_id: int) -> dict[str, Any]:
-        """Compare DB vs broker positions for a user.
-
-        Args:
-            user_id: ID of the owning user.
+    async def reconcile(self) -> dict[str, Any]:
+        """Compare DB vs broker positions and return discrepancies.
 
         Returns:
             Dictionary with 'matched', 'discrepancies', 'db_only', and 'broker_only' lists.
@@ -46,8 +58,7 @@ class Reconciler:
         broker_map = {p.symbol: p for p in broker_positions}
 
         db_rows = self.db.fetch_all(
-            "SELECT symbol, shares, avg_cost FROM positions WHERE shares > 0 AND user_id = ?",
-            (user_id,),
+            "SELECT symbol, shares, avg_cost FROM positions WHERE shares > 0"
         )
         db_map = {r["symbol"]: r for r in db_rows}
 
@@ -93,12 +104,14 @@ class Reconciler:
         )
         return result
 
-    async def auto_sync(self, discrepancies: list[dict[str, Any]], user_id: int) -> int:
+    async def auto_sync(self, discrepancies: list[dict[str, Any]]) -> int:
         """Fix minor discrepancies by updating DB to match broker.
+
+        Only syncs discrepancies where the absolute difference is small
+        (< 1 share), treating them as rounding differences.
 
         Args:
             discrepancies: List of discrepancy dicts from reconcile().
-            user_id: ID of the owning user.
 
         Returns:
             Number of positions synced.
@@ -107,8 +120,8 @@ class Reconciler:
         for d in discrepancies:
             if abs(d["diff"]) < 1.0:
                 self.db.execute(
-                    "UPDATE positions SET shares = ? WHERE symbol = ? AND shares > 0 AND user_id = ?",
-                    (d["broker_shares"], d["symbol"], user_id),
+                    "UPDATE positions SET shares = ? WHERE symbol = ? AND shares > 0",
+                    (d["broker_shares"], d["symbol"]),
                 )
                 _audit(
                     self.db,
@@ -124,18 +137,15 @@ class Reconciler:
                 )
         return synced
 
-    async def daily_check(self, user_id: int) -> dict[str, Any]:
+    async def daily_check(self) -> dict[str, Any]:
         """Run daily reconciliation and auto-sync minor issues.
-
-        Args:
-            user_id: ID of the owning user.
 
         Returns:
             Reconciliation result with auto_synced count added.
         """
-        result = await self.reconcile(user_id)
+        result = await self.reconcile()
         if result["discrepancies"]:
-            synced = await self.auto_sync(result["discrepancies"], user_id)
+            synced = await self.auto_sync(result["discrepancies"])
             result["auto_synced"] = synced
         else:
             result["auto_synced"] = 0

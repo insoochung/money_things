@@ -1,6 +1,7 @@
 """What-if engine for tracking hypothetical outcomes of rejected/ignored signals.
 
-All methods now accept user_id for multi-user scoping.
+Records what would have happened if a signal had been acted on, enabling
+learning about rejection accuracy and opportunity cost of ignored signals.
 """
 
 from __future__ import annotations
@@ -16,19 +17,31 @@ logger = logging.getLogger(__name__)
 
 
 class WhatIfEngine:
-    """Tracks hypothetical outcomes of rejected and ignored signals."""
+    """Tracks hypothetical outcomes of rejected and ignored signals.
+
+    When a signal is rejected or ignored, this engine records the price at
+    that moment. It then periodically updates current prices to compute
+    hypothetical P/L, answering: "What if we had taken that trade?"
+
+    Attributes:
+        db: Database instance for what_if table operations.
+    """
 
     def __init__(self, db: Database) -> None:
+        """Initialize the what-if engine.
+
+        Args:
+            db: Database instance with what_if and signals tables.
+        """
         self.db = db
 
-    def record_pass(self, signal_id: int, decision: str, price_at_pass: float, user_id: int) -> None:
+    def record_pass(self, signal_id: int, decision: str, price_at_pass: float) -> None:
         """Record a rejected or ignored signal for what-if tracking.
 
         Args:
             signal_id: ID of the signal that was passed on.
             decision: Either 'rejected' or 'ignored'.
             price_at_pass: Market price at the time of the decision.
-            user_id: ID of the owning user.
 
         Raises:
             ValueError: If decision is not 'rejected' or 'ignored'.
@@ -38,9 +51,9 @@ class WhatIfEngine:
             raise ValueError(msg)
 
         self.db.execute(
-            "INSERT INTO what_if (signal_id, decision, price_at_pass, updated_at, user_id) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (signal_id, decision, price_at_pass, datetime.now(UTC).isoformat(), user_id),
+            "INSERT INTO what_if (signal_id, decision, price_at_pass, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            (signal_id, decision, price_at_pass, datetime.now(UTC).isoformat()),
         )
         self.db.connect().commit()
         logger.info(
@@ -50,20 +63,18 @@ class WhatIfEngine:
             price_at_pass,
         )
 
-    def update_all(self, user_id: int) -> int:
+    def update_all(self) -> int:
         """Refresh current prices and hypothetical P/L for all open what-ifs.
 
-        Args:
-            user_id: ID of the owning user.
+        Fetches current prices for all tracked symbols and updates the
+        hypothetical_pnl and hypothetical_pnl_pct fields.
 
         Returns:
             Number of what-if records updated.
         """
         rows = self.db.fetchall(
             "SELECT w.id, w.signal_id, w.price_at_pass, s.symbol, s.action "
-            "FROM what_if w JOIN signals s ON w.signal_id = s.id "
-            "WHERE w.user_id = ?",
-            (user_id,),
+            "FROM what_if w JOIN signals s ON w.signal_id = s.id"
         )
 
         updated = 0
@@ -94,19 +105,16 @@ class WhatIfEngine:
         logger.info("Updated %d/%d what-if records", updated, len(rows))
         return updated
 
-    def get_summary(self, user_id: int) -> dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """Compute summary statistics for what-if tracking.
 
-        Args:
-            user_id: ID of the owning user.
-
         Returns:
-            Dict with pass_accuracy, reject_accuracy, ignore_cost, engagement_quality.
+            Dict with pass_accuracy, reject_accuracy, ignore_cost,
+            engagement_quality metrics.
         """
         rows = self.db.fetchall(
             "SELECT decision, hypothetical_pnl, hypothetical_pnl_pct FROM what_if "
-            "WHERE hypothetical_pnl IS NOT NULL AND user_id = ?",
-            (user_id,),
+            "WHERE hypothetical_pnl IS NOT NULL"
         )
 
         if not rows:
@@ -121,18 +129,22 @@ class WhatIfEngine:
         rejected = [r for r in rows if r["decision"] == "rejected"]
         ignored = [r for r in rows if r["decision"] == "ignored"]
 
+        # Reject accuracy: % of rejections that would have lost money
         reject_accuracy = 0.0
         if rejected:
             correct_rejects = sum(1 for r in rejected if (r["hypothetical_pnl"] or 0) <= 0)
             reject_accuracy = correct_rejects / len(rejected)
 
+        # Pass accuracy: % of all passes that were correct (would have lost)
         correct_passes = sum(1 for r in rows if (r["hypothetical_pnl"] or 0) <= 0)
         pass_accuracy = correct_passes / len(rows)
 
+        # Ignore cost: avg hypothetical return of ignored signals (opportunity cost)
         ignore_cost = 0.0
         if ignored:
             ignore_cost = sum(r["hypothetical_pnl_pct"] or 0 for r in ignored) / len(ignored)
 
+        # Engagement quality: reject_accuracy - (1 - pass_accuracy of ignored)
         ignore_accuracy = 0.0
         if ignored:
             correct_ignores = sum(1 for r in ignored if (r["hypothetical_pnl"] or 0) <= 0)
@@ -147,22 +159,21 @@ class WhatIfEngine:
             "total_tracked": len(rows),
         }
 
-    def update_what_if_prices(self, user_id: int) -> int:
-        """Convenience alias for update_all().
+    def update_what_if_prices(self) -> int:
+        """Update current prices and hypothetical P/L for all active what-if entries.
 
-        Args:
-            user_id: ID of the owning user.
+        Convenience alias for update_all(). Fetches current market prices for every
+        tracked what-if entry and recomputes the hypothetical P/L.
 
         Returns:
             Number of entries updated.
         """
-        return self.update_all(user_id)
+        return self.update_all()
 
-    def list_whatifs(self, user_id: int, decision: str | None = None) -> list[dict[str, Any]]:
-        """List what-if records for a user.
+    def list_whatifs(self, decision: str | None = None) -> list[dict[str, Any]]:
+        """List what-if records, optionally filtered by decision type.
 
         Args:
-            user_id: ID of the owning user.
             decision: Filter by 'rejected' or 'ignored'. None returns all.
 
         Returns:
@@ -172,15 +183,13 @@ class WhatIfEngine:
             rows = self.db.fetchall(
                 "SELECT w.*, s.symbol, s.action FROM what_if w "
                 "JOIN signals s ON w.signal_id = s.id "
-                "WHERE w.decision = ? AND w.user_id = ? ORDER BY w.id DESC",
-                (decision, user_id),
+                "WHERE w.decision = ? ORDER BY w.id DESC",
+                (decision,),
             )
         else:
             rows = self.db.fetchall(
                 "SELECT w.*, s.symbol, s.action FROM what_if w "
-                "JOIN signals s ON w.signal_id = s.id "
-                "WHERE w.user_id = ? ORDER BY w.id DESC",
-                (user_id,),
+                "JOIN signals s ON w.signal_id = s.id ORDER BY w.id DESC"
             )
         return rows
 
@@ -188,10 +197,19 @@ class WhatIfEngine:
     def _compute_hypothetical_pnl(
         action: str, entry_price: float, current_price: float
     ) -> tuple[float, float]:
-        """Compute hypothetical P/L for a what-if scenario."""
+        """Compute hypothetical P/L for a what-if scenario.
+
+        Args:
+            action: Signal action (BUY, SELL, SHORT, COVER).
+            entry_price: Price at time of signal rejection/ignore.
+            current_price: Current market price.
+
+        Returns:
+            Tuple of (absolute_pnl, pnl_percentage).
+        """
         if action in ("BUY", "COVER"):
             pnl = current_price - entry_price
-        else:
+        else:  # SELL, SHORT
             pnl = entry_price - current_price
 
         pnl_pct = pnl / entry_price if entry_price > 0 else 0.0

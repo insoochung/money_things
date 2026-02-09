@@ -51,7 +51,7 @@ def test_get_all_principles(seeded_db) -> None:
     principles.
     """
     pe = PrinciplesEngine(seeded_db)
-    principles = pe.get_all(user_id=1)
+    principles = pe.get_all()
     assert len(principles) >= 2
 
 
@@ -63,14 +63,14 @@ def test_create_principle(db) -> None:
     correctly. Uses the empty ``db`` fixture since no pre-existing data is needed.
     """
     pe = PrinciplesEngine(db)
-    pid = pe.create_principle(user_id=1,
+    pid = pe.create_principle(
         text="Test principle",
         category="risk",
         origin="user_input",
         weight=0.03,
     )
     assert pid > 0
-    p = pe.get_principle(pid, user_id=1)
+    p = pe.get_principle(pid)
     assert p["text"] == "Test principle"
     assert p["category"] == "risk"
     assert p["weight"] == 0.03
@@ -83,12 +83,12 @@ def test_validate_principle(seeded_db) -> None:
     calls validate_principle(), and checks that the count increased by exactly 1.
     """
     pe = PrinciplesEngine(seeded_db)
-    principles = pe.get_all(user_id=1)
+    principles = pe.get_all()
     pid = principles[0]["id"]
     original_count = principles[0]["validated_count"]
 
-    pe.validate_principle(pid, user_id=1)
-    updated = pe.get_principle(pid, user_id=1)
+    pe.validate_principle(pid)
+    updated = pe.get_principle(pid)
     assert updated["validated_count"] == original_count + 1
 
 
@@ -99,11 +99,11 @@ def test_invalidate_principle(seeded_db) -> None:
     invalidate_principle(), the count should be 1.
     """
     pe = PrinciplesEngine(seeded_db)
-    principles = pe.get_all(user_id=1)
+    principles = pe.get_all()
     pid = principles[0]["id"]
 
-    pe.invalidate_principle(pid, user_id=1)
-    updated = pe.get_principle(pid, user_id=1)
+    pe.invalidate_principle(pid)
+    updated = pe.get_principle(pid)
     assert updated["invalidated_count"] == 1
 
 
@@ -116,15 +116,15 @@ def test_deactivate_poor_principle(db) -> None:
     principles from continuing to influence signal scoring.
     """
     pe = PrinciplesEngine(db)
-    pid = pe.create_principle(user_id=1, text="Bad principle", category="test")
+    pid = pe.create_principle(text="Bad principle", category="test")
 
     # Invalidate many times
     for _ in range(5):
-        pe.invalidate_principle(pid, user_id=1)
+        pe.invalidate_principle(pid)
 
-    deactivated = pe.deactivate_if_poor(pid, user_id=1)
+    deactivated = pe.deactivate_if_poor(pid)
     assert deactivated
-    p = pe.get_principle(pid, user_id=1)
+    p = pe.get_principle(pid)
     assert not p["active"]
 
 
@@ -137,7 +137,7 @@ def test_match_principles(seeded_db) -> None:
     domains. Expects at least 1 match.
     """
     pe = PrinciplesEngine(seeded_db)
-    matched = pe.match_principles({"domain": "AI", "symbol": "NVDA"}, user_id=1)
+    matched = pe.match_principles({"domain": "AI", "symbol": "NVDA"})
     # Should match domain + conviction principles
     assert len(matched) >= 1
 
@@ -151,7 +151,7 @@ def test_apply_to_score(seeded_db) -> None:
     contribute positively to confidence).
     """
     pe = PrinciplesEngine(seeded_db)
-    principles = pe.get_all(user_id=1)
-    adjustment = pe.apply_to_score(principles, user_id=1)
+    principles = pe.get_all()
+    adjustment = pe.apply_to_score(principles)
     # With 2 validated > invalidated, should be positive
     assert isinstance(adjustment, float)

@@ -1,6 +1,8 @@
 """Enhanced approval workflow with auto-approve rules and signal modification.
 
-All methods now accept user_id for multi-user scoping.
+Routes trading signals through configurable approval logic. Supports auto-approval
+for low-value trades, high-confidence signals, and rebalance operations. Signals
+that don't meet auto-approve criteria are routed to the user via Telegram.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from engine import ActorType, Signal, SignalStatus
 
 logger = logging.getLogger(__name__)
 
+# Default auto-approve thresholds (configurable via settings table)
 DEFAULT_MAX_AUTO_VALUE = 500.0
 DEFAULT_MIN_AUTO_CONFIDENCE = 0.9
 
@@ -28,7 +31,18 @@ def _audit(db: Database, action: str, detail: str) -> None:
 
 
 class ApprovalWorkflow:
-    """Enhanced signal approval with auto-approve rules and modification support."""
+    """Enhanced signal approval with auto-approve rules and modification support.
+
+    Evaluates signals against configurable rules to determine if they can be
+    auto-approved or need manual review. Supports modifying pending signals
+    before approval.
+
+    Attributes:
+        db: Database instance for state management.
+        signal_engine: Signal engine for creating/updating signals.
+        broker: Broker instance for order preview.
+        risk_manager: Risk manager for position limits.
+    """
 
     def __init__(
         self,
@@ -37,26 +51,30 @@ class ApprovalWorkflow:
         broker: Any,
         risk_manager: Any,
     ) -> None:
+        """Initialize the approval workflow.
+
+        Args:
+            db: Database instance.
+            signal_engine: Signal engine for signal management.
+            broker: Broker for order preview and execution.
+            risk_manager: Risk manager for checking limits.
+        """
         self.db = db
         self.signal_engine = signal_engine
         self.broker = broker
         self.risk_manager = risk_manager
 
-    def _get_setting(self, key: str, default: float, user_id: int) -> float:
-        """Retrieve a numeric setting.
+    def _get_setting(self, key: str, default: float) -> float:
+        """Retrieve a numeric setting from the settings table.
 
         Args:
             key: Setting key name.
-            default: Default value.
-            user_id: ID of the owning user.
+            default: Default value if key not found.
 
         Returns:
             The setting value as a float.
         """
-        row = self.db.fetch_one(
-            "SELECT value FROM settings WHERE key = ? AND user_id = ?",
-            (key, user_id),
-        )
+        row = self.db.fetch_one("SELECT value FROM settings WHERE key = ?", (key,))
         if row:
             try:
                 return float(row["value"])
@@ -64,22 +82,25 @@ class ApprovalWorkflow:
                 pass
         return default
 
-    def should_auto_approve(self, signal: Signal, user_id: int) -> bool:
+    def should_auto_approve(self, signal: Signal) -> bool:
         """Check if a signal meets auto-approve criteria.
+
+        Auto-approve rules (any one sufficient):
+        1. Estimated trade value < configurable threshold (default $500)
+        2. Confidence > threshold AND thesis is confirmed
+        3. Signal is a rebalance action (maintaining target weights)
 
         Args:
             signal: The signal to evaluate.
-            user_id: ID of the owning user.
 
         Returns:
             True if the signal should be auto-approved.
         """
         # Rule 1: Low-value trades
-        max_value = self._get_setting("auto_approve_max_value", DEFAULT_MAX_AUTO_VALUE, user_id)
+        max_value = self._get_setting("auto_approve_max_value", DEFAULT_MAX_AUTO_VALUE)
         if signal.size_pct is not None:
             portfolio = self.db.fetch_one(
-                "SELECT total_value FROM portfolio_value WHERE user_id = ? ORDER BY timestamp DESC LIMIT 1",
-                (user_id,),
+                "SELECT total_value FROM portfolio_value ORDER BY timestamp DESC LIMIT 1"
             )
             if portfolio:
                 trade_value = portfolio["total_value"] * (signal.size_pct / 100)
@@ -95,12 +116,11 @@ class ApprovalWorkflow:
 
         # Rule 2: High confidence + confirmed thesis
         min_confidence = self._get_setting(
-            "auto_approve_min_confidence", DEFAULT_MIN_AUTO_CONFIDENCE, user_id
+            "auto_approve_min_confidence", DEFAULT_MIN_AUTO_CONFIDENCE
         )
         if signal.confidence >= min_confidence and signal.thesis_id:
             thesis = self.db.fetch_one(
-                "SELECT status FROM theses WHERE id = ? AND user_id = ?",
-                (signal.thesis_id, user_id),
+                "SELECT status FROM theses WHERE id = ?", (signal.thesis_id,)
             )
             if thesis and thesis["status"] == "confirmed":
                 logger.info(
@@ -118,21 +138,23 @@ class ApprovalWorkflow:
 
         return False
 
-    def process_signal(self, signal: Signal, user_id: int) -> dict[str, Any]:
+    def process_signal(self, signal: Signal) -> dict[str, Any]:
         """Route a signal through the approval flow.
+
+        If the signal meets auto-approve criteria, it is approved immediately.
+        Otherwise, it remains pending for manual review.
 
         Args:
             signal: The signal to process.
-            user_id: ID of the owning user.
 
         Returns:
-            Dictionary with 'status' and 'signal_id'.
+            Dictionary with 'status' ('auto_approved' or 'pending') and 'signal_id'.
         """
-        if self.should_auto_approve(signal, user_id):
+        if self.should_auto_approve(signal):
             now = datetime.now(UTC).isoformat()
             self.db.execute(
-                "UPDATE signals SET status = ?, decided_at = ? WHERE id = ? AND user_id = ?",
-                (SignalStatus.APPROVED, now, signal.id, user_id),
+                "UPDATE signals SET status = ?, decided_at = ? WHERE id = ?",
+                (SignalStatus.APPROVED, now, signal.id),
             )
             _audit(
                 self.db,
@@ -151,25 +173,22 @@ class ApprovalWorkflow:
     def modify_signal(
         self,
         signal_id: int,
-        user_id: int,
         size_override: float | None = None,
         price_override: float | None = None,
     ) -> dict[str, Any]:
         """Modify a pending signal's size or price before approval.
 
+        Only signals in PENDING status can be modified.
+
         Args:
             signal_id: ID of the signal to modify.
-            user_id: ID of the owning user.
-            size_override: New size percentage.
+            size_override: New size percentage (replaces size_pct).
             price_override: New limit price override.
 
         Returns:
             Dictionary with 'success' flag and 'message'.
         """
-        row = self.db.fetch_one(
-            "SELECT id, status, symbol FROM signals WHERE id = ? AND user_id = ?",
-            (signal_id, user_id),
-        )
+        row = self.db.fetch_one("SELECT id, status, symbol FROM signals WHERE id = ?", (signal_id,))
         if not row:
             return {"success": False, "message": f"Signal {signal_id} not found"}
 
@@ -194,9 +213,8 @@ class ApprovalWorkflow:
             return {"success": False, "message": "No modifications specified"}
 
         params.append(signal_id)
-        params.append(user_id)
         self.db.execute(
-            f"UPDATE signals SET {', '.join(updates)} WHERE id = ? AND user_id = ?",
+            f"UPDATE signals SET {', '.join(updates)} WHERE id = ?",
             tuple(params),
         )
 
