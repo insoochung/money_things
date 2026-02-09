@@ -1,13 +1,21 @@
 """Telegram command handlers for the thoughts module.
 
-These functions are called from the moves bot's telegram handler
-to dispatch thoughts-related commands.
+Three commands only: /think, /note, /journal.
+Called from the moves bot's telegram handler.
 """
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 from bridge import ThoughtsBridge
+from context_builder import (
+    build_context,
+    compute_slow_to_act_gates,
+)
 from engine import ThoughtsEngine
+from spawner import build_task
 
 
 def _get_engine() -> ThoughtsEngine:
@@ -20,192 +28,198 @@ def _get_bridge() -> ThoughtsBridge:
     return ThoughtsBridge(_get_engine())
 
 
-def cmd_think(thesis_name: str) -> str:
-    """Spawn or resume a thoughts session for a thesis.
+def cmd_think(idea: str) -> dict[str, Any]:
+    """Build a /think research session for an idea.
+
+    Looks up existing thesis, builds context, and produces the
+    task string for the sub-agent. The caller (Munny) relays
+    the task to OpenClaw's sessions_spawn.
 
     Args:
-        thesis_name: Thesis name or ID to research.
+        idea: Thesis name, ID, or new idea to research.
 
     Returns:
-        Status message for Telegram.
+        Dict with keys:
+            - message: Status message for Telegram
+            - task: Full task string for sessions_spawn (or None)
+            - thesis_id: Matched thesis ID (or None for new ideas)
+            - is_new: Whether this is a new idea
     """
     engine = _get_engine()
+    bridge = _get_bridge()
 
-    # Try to find thesis by ID or name
-    thesis_id: int | None = None
-    thesis_title = thesis_name
+    ctx, formatted = build_context(engine, bridge, idea)
+    thesis = ctx.get("thesis")
+    gates = compute_slow_to_act_gates(ctx)
+    task = build_task(idea, formatted, gates)
 
-    # Check if it's a numeric ID
-    try:
-        thesis_id = int(thesis_name)
-        thesis = engine.get_thesis(thesis_id)
-        if thesis:
-            thesis_title = thesis["title"]
-    except ValueError:
-        # Search by name in moves DB theses
-        for t in engine.get_theses():
-            if thesis_name.lower() in t["title"].lower():
-                thesis_id = t["id"]
-                thesis_title = t["title"]
-                break
+    if thesis:
+        # Record a new session
+        session_key = f"thoughts-thesis-{thesis['id']}"
+        session_id = engine.create_session(thesis['id'], session_key)
+        conviction = thesis.get("conviction", 0) or 0
+        pct = int(conviction * 100)
 
-    if thesis_id is None:
-        return f"❓ No thesis found matching '{thesis_name}'. Create one in moves first."
-
-    # Check for existing active session
-    session = engine.get_active_session(thesis_id)
-    if session:
-        return (
-            f"🧠 Resuming thoughts on: {thesis_title}\n"
-            f"Session #{session['id']} (started {session['created_at']})\n\n"
-            f"Use the sub-agent session to continue research."
+        message = (
+            f"🧠 Deepening thesis: {thesis['title']}\n"
+            f"Conviction: {pct}% | "
+            f"Sessions: {gates['session_count']}\n"
+            f"Session #{session_id} started.\n\n"
+            f"Spawning research sub-agent..."
         )
+        return {
+            "message": message,
+            "task": task,
+            "thesis_id": thesis["id"],
+            "is_new": False,
+        }
 
-    # Create new session
-    session_key = f"thoughts-thesis-{thesis_id}"
-    session_id = engine.create_session(thesis_id, session_key)
-    return (
-        f"🧠 Starting research session on: {thesis_title}\n"
-        f"Session #{session_id}\n\n"
+    message = (
+        f"🧠 New idea: {idea}\n"
+        f"No existing thesis found — researching from scratch.\n\n"
         f"Spawning research sub-agent..."
     )
+    return {
+        "message": message,
+        "task": task,
+        "thesis_id": None,
+        "is_new": True,
+    }
 
 
-def cmd_journal(thesis_id: int | None = None) -> str:
-    """List active thought threads / journals.
+def cmd_note(text: str) -> str:
+    """Capture a quick observation, auto-tagged to relevant thesis.
+
+    Scans active theses for symbol/keyword matches and links
+    the note accordingly.
 
     Args:
-        thesis_id: Optional thesis ID to filter by.
+        text: The observation text.
+
+    Returns:
+        Confirmation message for Telegram.
+    """
+    engine = _get_engine()
+    text_upper = text.upper()
+
+    # Try to auto-link to a thesis by matching symbols
+    linked_thesis_id: int | None = None
+    linked_symbol: str | None = None
+
+    for thesis in engine.get_theses():
+        symbols = _parse_thesis_symbols(thesis)
+        for sym in symbols:
+            if sym in text_upper:
+                linked_thesis_id = thesis["id"]
+                linked_symbol = sym
+                break
+        if linked_thesis_id:
+            break
+
+    # Also try matching thesis title keywords
+    if not linked_thesis_id:
+        text_lower = text.lower()
+        for thesis in engine.get_theses():
+            title_words = thesis["title"].lower().split()
+            # Match if any significant word (>3 chars) appears
+            for word in title_words:
+                if len(word) > 3 and word in text_lower:
+                    linked_thesis_id = thesis["id"]
+                    break
+            if linked_thesis_id:
+                break
+
+    thought_id = engine.add_thought(
+        content=text,
+        linked_thesis_id=linked_thesis_id,
+        linked_symbol=linked_symbol,
+    )
+
+    tag_info = ""
+    if linked_thesis_id:
+        tag_info = f" → linked to thesis #{linked_thesis_id}"
+        if linked_symbol:
+            tag_info += f" ({linked_symbol})"
+
+    return f"📝 Note #{thought_id} captured{tag_info}."
+
+
+def cmd_journal() -> str:
+    """Read-only view of recent sessions, notes, and thesis history.
 
     Returns:
         Formatted journal listing for Telegram.
     """
     engine = _get_engine()
-    journals = engine.list_journals(thesis_id=thesis_id, limit=10)
 
-    if not journals:
-        return "📓 No journal entries yet."
+    sections: list[str] = ["📓 **Journal**\n"]
 
-    lines = ["📓 Recent Journals\n"]
-    for j in journals:
-        type_emoji = {
-            "research": "🔬",
-            "review": "📊",
-            "discovery": "🔍",
-            "thought": "💭",
-        }.get(j["journal_type"], "📝")
-        thesis_tag = f" [T#{j['thesis_id']}]" if j["thesis_id"] else ""
-        lines.append(f"{type_emoji} #{j['id']}: {j['title']}{thesis_tag}")
-        lines.append(f"   {j['created_at'][:10]} • {j['journal_type']}")
-    return "\n".join(lines)
+    # Active theses summary
+    theses = engine.get_theses()
+    if theses:
+        sections.append("**Active Theses:**")
+        for t in theses[:5]:
+            conviction = t.get("conviction", 0) or 0
+            pct = int(conviction * 100)
+            sections.append(
+                f"  • {t['title']} — {pct}% conviction"
+            )
+        sections.append("")
 
+    # Recent sessions
+    completed = engine.list_sessions(status="completed")
+    active = engine.list_sessions(status="active")
+    all_sessions = active + completed
+    if all_sessions:
+        sections.append("**Recent Sessions:**")
+        for s in all_sessions[:5]:
+            date = s.get("created_at", "")[:10]
+            status = s.get("status", "?")
+            summary = s.get("summary", "No summary")[:80]
+            sections.append(
+                f"  • [{date}] #{s['id']} ({status}): {summary}"
+            )
+        sections.append("")
 
-def cmd_review(symbol: str) -> str:
-    """Get current research take on a symbol.
+    # Recent notes
+    thoughts = engine.list_thoughts(limit=5)
+    if thoughts:
+        sections.append("**Recent Notes:**")
+        for t in thoughts:
+            date = t.get("created_at", "")[:10]
+            content = t["content"][:80]
+            tag = ""
+            if t.get("linked_symbol"):
+                tag = f" [{t['linked_symbol']}]"
+            sections.append(f"  • [{date}]{tag} {content}")
+        sections.append("")
 
-    Args:
-        symbol: Stock ticker symbol.
+    # Recent journals
+    journals = engine.list_journals(limit=5)
+    if journals:
+        sections.append("**Recent Journals:**")
+        for j in journals:
+            date = j.get("created_at", "")[:10]
+            emoji = {
+                "research": "🔬", "review": "📊",
+                "discovery": "🔍", "thought": "💭",
+            }.get(j["journal_type"], "📝")
+            sections.append(
+                f"  {emoji} [{date}] {j['title'][:60]}"
+            )
 
-    Returns:
-        Research summary for Telegram.
-    """
-    engine = _get_engine()
-    note = engine.get_latest_research(symbol.upper())
+    if len(sections) == 1:
+        return "📓 No journal entries yet. Use /think to start."
 
-    if not note:
-        return f"📭 No research notes for {symbol.upper()}. Use /research to start."
-
-    lines = [
-        f"🔬 Research: {symbol.upper()}",
-        f"{'━' * 28}",
-        f"📋 {note['title']}",
-    ]
-
-    if note.get("confidence"):
-        lines.append(f"📊 Confidence: {int(note['confidence'] * 100)}%")
-    if note.get("fair_value_estimate"):
-        lines.append(f"💰 Fair Value: ${note['fair_value_estimate']:.2f}")
-    if note.get("bull_case"):
-        lines.append(f"\n🐂 Bull: {note['bull_case'][:200]}")
-    if note.get("bear_case"):
-        lines.append(f"\n🐻 Bear: {note['bear_case'][:200]}")
-
-    lines.append(f"\nUpdated: {note['updated_at'][:10]}")
-    return "\n".join(lines)
-
-
-def cmd_thought(text: str) -> str:
-    """Capture a quick thought.
-
-    Args:
-        text: The thought to capture.
-
-    Returns:
-        Confirmation message.
-    """
-    engine = _get_engine()
-    thought_id = engine.add_thought(content=text)
-    return f"💭 Thought #{thought_id} captured."
+    return "\n".join(sections)
 
 
-def cmd_onboard(answers: dict[str, str] | None = None) -> str:
-    """Run onboarding to generate an investor profile.
-
-    Args:
-        answers: Optional dict of interview answers keyed by question ID.
-            If None, returns the interview questions formatted for Telegram.
-
-    Returns:
-        Interview questions or profile summary.
-    """
-    from onboard import OnboardingEngine
-
-    engine = _get_engine()
-    bridge = _get_bridge()
-    onboard = OnboardingEngine(engine, bridge)
-
-    if answers is None:
-        questions = onboard.get_interview_questions()
-        lines = ["📋 *Investor Onboarding*\n"]
-        lines.append("Reply with `/onboard` followed by numbered answers:\n")
-        for i, q in enumerate(questions, 1):
-            lines.append(f"{i}. {q['question']}")
-        lines.append("\nExample:")
-        lines.append("`/onboard 1. Growth 2. Months 3. Tech 4. Moderate ...`")
-        return "\n".join(lines)
-
-    profile = onboard.get_combined_profile(answers)
-    onboard.save_profile(profile)
-    return f"✅ Investor profile saved!\n\n{profile[:1500]}"
-
-
-def cmd_research(symbol: str) -> str:
-    """Trigger a deep-dive research session on a symbol.
-
-    Args:
-        symbol: Stock ticker to research.
-
-    Returns:
-        Status message indicating research session is starting.
-    """
-    engine = _get_engine()
-    symbol = symbol.upper()
-
-    # Check if symbol is in any active thesis
-    thesis_context = ""
-    for thesis in engine.get_theses():
-        symbols_str = thesis.get("symbols", "[]")
-        try:
-            import json
-
-            symbols = json.loads(symbols_str) if symbols_str else []
-        except (json.JSONDecodeError, TypeError):
-            symbols = []
-        if symbol in symbols:
-            thesis_context = f"\nLinked to thesis: {thesis['title']} (#{thesis['id']})"
-            break
-
-    return (
-        f"🔬 Starting deep-dive on {symbol}{thesis_context}\n\n"
-        f"Spawning research sub-agent..."
-    )
+def _parse_thesis_symbols(thesis: dict[str, Any]) -> list[str]:
+    """Extract symbol list from a thesis dict."""
+    raw = thesis.get("symbols", "[]")
+    if not raw:
+        return []
+    try:
+        return json.loads(raw) if isinstance(raw, str) else list(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []

@@ -1,4 +1,4 @@
-"""Tests for thoughts command handlers."""
+"""Tests for thoughts command handlers (3-command structure)."""
 
 from __future__ import annotations
 
@@ -15,11 +15,8 @@ import commands
 from engine import ThoughtsEngine
 
 
-@pytest.fixture(autouse=True)
-def _patch_engine(tmp_path: Path):
-    """Patch commands to use temp DBs."""
-    moves_db = tmp_path / "moves.db"
-    conn = sqlite3.connect(str(moves_db))
+def _create_moves_db(path: Path) -> None:
+    conn = sqlite3.connect(str(path))
     conn.executescript("""
         CREATE TABLE theses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,46 +44,94 @@ def _patch_engine(tmp_path: Path):
             shares REAL, price REAL,
             timestamp TEXT DEFAULT (datetime('now'))
         );
-        INSERT INTO theses (title, symbols) VALUES ('AI inference', '["AMD"]');
+        INSERT INTO theses (title, symbols, conviction)
+            VALUES ('AI inference', '["AMD"]', 0.6);
+        INSERT INTO theses (title, symbols, conviction)
+            VALUES ('Cloud security', '["CRWD","ZS"]', 0.75);
     """)
     conn.commit()
     conn.close()
 
-    engine = ThoughtsEngine(thoughts_db=tmp_path / "thoughts.db", moves_db=moves_db)
 
-    with patch.object(commands, "_get_engine", return_value=engine):
-        from bridge import ThoughtsBridge
+@pytest.fixture(autouse=True)
+def _patch_engine(tmp_path: Path):
+    """Patch commands to use temp DBs."""
+    moves_db = tmp_path / "moves.db"
+    _create_moves_db(moves_db)
 
-        bridge = ThoughtsBridge(engine)
-        with patch.object(commands, "_get_bridge", return_value=bridge):
-            yield
+    # Write a minimal agent prompt for spawner
+    prompt = tmp_path / "prompt.md"
+    prompt.write_text("# Test Agent Prompt")
 
+    engine = ThoughtsEngine(
+        thoughts_db=tmp_path / "thoughts.db", moves_db=moves_db,
+    )
 
-def test_cmd_think_by_name():
-    result = commands.cmd_think("AI inference")
-    assert "Starting research" in result or "Resuming" in result
+    from bridge import ThoughtsBridge
+    bridge = ThoughtsBridge(engine)
 
-
-def test_cmd_think_not_found():
-    result = commands.cmd_think("nonexistent thesis")
-    assert "No thesis found" in result
-
-
-def test_cmd_thought():
-    result = commands.cmd_thought("Market seems overheated")
-    assert "captured" in result
-
-
-def test_cmd_journal_empty():
-    result = commands.cmd_journal()
-    assert "No journal" in result
+    with (
+        patch.object(commands, "_get_engine", return_value=engine),
+        patch.object(commands, "_get_bridge", return_value=bridge),
+    ):
+        yield
 
 
-def test_cmd_review_no_research():
-    result = commands.cmd_review("AAPL")
-    assert "No research" in result
+class TestCmdThink:
+    def test_existing_thesis_returns_task(self) -> None:
+        result = commands.cmd_think("AI inference")
+        assert isinstance(result, dict)
+        assert result["thesis_id"] is not None
+        assert result["task"] is not None
+        assert not result["is_new"]
+        assert "Deepening" in result["message"]
+
+    def test_new_idea_returns_task(self) -> None:
+        result = commands.cmd_think("quantum computing")
+        assert result["thesis_id"] is None
+        assert result["is_new"]
+        assert result["task"] is not None
+        assert "New idea" in result["message"]
+
+    def test_task_contains_context(self) -> None:
+        result = commands.cmd_think("Cloud security")
+        assert "CRWD" in result["task"]
+        assert "Cloud security" in result["task"]
 
 
-def test_cmd_research():
-    result = commands.cmd_research("AMD")
-    assert "deep-dive" in result.lower() or "Starting" in result
+class TestCmdNote:
+    def test_note_captured(self) -> None:
+        result = commands.cmd_note("Market feels frothy today")
+        assert "captured" in result
+
+    def test_auto_links_by_symbol(self) -> None:
+        result = commands.cmd_note("AMD earnings look strong")
+        assert "thesis #1" in result
+        assert "AMD" in result
+
+    def test_auto_links_by_title_keyword(self) -> None:
+        result = commands.cmd_note(
+            "cloud security spending increasing"
+        )
+        assert "thesis #2" in result
+
+    def test_no_link_when_unrelated(self) -> None:
+        result = commands.cmd_note("nice weather today")
+        assert "thesis" not in result.lower()
+
+
+class TestCmdJournal:
+    def test_empty_journal(self) -> None:
+        result = commands.cmd_journal()
+        assert "Active Theses" in result
+
+    def test_shows_theses(self) -> None:
+        result = commands.cmd_journal()
+        assert "AI inference" in result
+        assert "Cloud security" in result
+
+    def test_shows_notes_after_adding(self) -> None:
+        commands.cmd_note("Test observation")
+        result = commands.cmd_journal()
+        assert "Recent Notes" in result
+        assert "Test observation" in result
