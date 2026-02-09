@@ -1203,6 +1203,18 @@
     connect();
   }
 
+  // ── Reset Button ──
+  document.getElementById('reset-btn')?.addEventListener('click', async () => {
+    if (!confirm('Wipe all data and reseed from scratch?')) return;
+    try {
+      const r = await apiWrite('/api/fund/reset', 'POST');
+      alert(`✅ ${r.message}\nCleared: ${r.tables_cleared} tables\nSeeded: ${r.tables_seeded} tables`);
+      window.location.reload();
+    } catch (e) {
+      alert('Reset failed: ' + e.message);
+    }
+  });
+
   // ── Init ──
   // ── User Info ──
   async function loadUserInfo() {

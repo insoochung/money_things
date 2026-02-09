@@ -96,6 +96,17 @@ body {
   color: var(--text);
 }
 
+.btn-reset {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: .8rem;
+  color: var(--muted);
+}
+.btn-reset:hover { border-color: var(--danger, #e03e3e); color: var(--danger, #e03e3e); }
+
 .last-updated { font-size: .8rem; color: var(--muted); }
 
 /* — Stale Banner — */

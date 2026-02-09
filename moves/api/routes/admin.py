@@ -543,3 +543,130 @@ async def create_user(
     except Exception as e:
         logger.error("Failed to create user: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Database Reset ──────────────────────────────
+
+
+class ResetResponse(BaseModel):
+    """Response from database reset operation.
+
+    Attributes:
+        message: Status message.
+        tables_cleared: Number of tables cleared.
+        tables_seeded: Number of tables seeded.
+    """
+
+    message: str = Field(..., description="Status message")
+    tables_cleared: int = Field(..., description="Tables cleared")
+    tables_seeded: int = Field(..., description="Tables seeded")
+
+
+@router.post("/reset", response_model=ResetResponse)
+async def reset_and_reseed(
+    engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
+) -> ResetResponse:
+    """Wipe all data and reseed from scratch.
+
+    Drops all rows from every data table, re-runs schema init,
+    then re-runs the seed script. Auth tables (users) are preserved.
+
+    Args:
+        engines: Engine container with database.
+        user: Authenticated user (admin only).
+
+    Returns:
+        ResetResponse with counts.
+
+    Raises:
+        HTTPException: If user is not admin or reset fails.
+    """
+    _require_admin(user)
+
+    try:
+        db = engines.db
+
+        # Tables to clear (order matters for FK constraints)
+        tables = [
+            "trades", "signals", "lots", "tax_lots", "positions",
+            "portfolio_value", "theses", "watchlist_triggers",
+            "congress_trades", "principles", "risk_limits",
+            "kill_switch", "audit_log", "accounts",
+            "outcome_snapshots",
+        ]
+
+        cleared = 0
+        for table in tables:
+            try:
+                db.execute(f"DELETE FROM {table}")  # noqa: S608
+                cleared += 1
+            except Exception:
+                pass  # table may not exist
+        db.connect().commit()
+
+        logger.info("Cleared %d tables for reset", cleared)
+
+        # Re-seed using the seed script
+        import importlib
+        import sys as _sys
+
+        # Ensure fresh import
+        mod_name = "scripts.seed_mock"
+        if mod_name in _sys.modules:
+            del _sys.modules[mod_name]
+
+        import os
+
+        moves_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        _sys.path.insert(0, moves_root)
+
+        # The seed script creates its own DB connection, so we need to
+        # point it at the same DB file
+        os.environ["MOVES_TESTING"] = "1"
+        spec = importlib.util.find_spec("scripts.seed_mock")
+        if spec and spec.loader:
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            mod.seed_mock()
+            seeded = 14  # number of seed functions
+        else:
+            # Fallback: run as subprocess
+            import subprocess
+
+            result = subprocess.run(
+                [_sys.executable, "-m", "scripts.seed_mock"],
+                cwd=moves_root,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env={**os.environ, "MOVES_TESTING": "1"},
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"Seed failed: {result.stderr}")
+            seeded = result.stdout.count("✓")
+
+        os.environ.pop("MOVES_TESTING", None)
+
+        # Log the reset
+        db.execute(
+            """INSERT INTO audit_log (action, entity_type, actor, details)
+               VALUES ('database_reset', 'system', ?, 'Full wipe and reseed')""",
+            (f"user:{user.get('id', 'unknown')}",),
+        )
+        db.connect().commit()
+
+        logger.warning("Database reset and reseeded by user %s", user.get("email"))
+
+        return ResetResponse(
+            message="Database wiped and reseeded successfully",
+            tables_cleared=cleared,
+            tables_seeded=seeded,
+        )
+
+    except Exception as e:
+        logger.error("Database reset failed: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Reset failed: {str(e)}",
+        )
