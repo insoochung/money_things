@@ -303,6 +303,14 @@ def create_app() -> FastAPI:
     # Authentication middleware (protects all routes except /auth/* and /health)
     app.add_middleware(AuthMiddleware)
 
+    # Session middleware required by authlib for OAuth state parameter
+    from starlette.middleware.sessions import SessionMiddleware
+
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=get_settings().session_secret_key or "dev-secret-change-me",
+    )
+
     # Health check endpoint (unprotected)
     @app.get("/health")
     async def health_check() -> dict[str, str]:

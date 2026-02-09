@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Money Moves — Sign In</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #f7f7f5;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    color: #37352f;
+  }
+
+  .login-container {
+    background: #ffffff;
+    border: 1px solid #e8e8e4;
+    border-radius: 4px;
+    padding: 3rem 2.5rem;
+    width: 380px;
+    text-align: center;
+  }
+
+  .logo {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #37352f;
+    margin-bottom: 0.25rem;
+    letter-spacing: -0.02em;
+  }
+
+  .subtitle {
+    font-size: 0.8rem;
+    color: #9b9a97;
+    margin-bottom: 2rem;
+  }
+
+  .google-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.7rem 1rem;
+    background: #ffffff;
+    color: #37352f;
+    border: 1px solid #e8e8e4;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  .google-btn:hover {
+    background: #f7f7f5;
+    border-color: #d3d3d0;
+  }
+
+  .google-btn svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+  }
+
+  .error-msg {
+    background: #fdf2f2;
+    border: 1px solid #f5c6c6;
+    color: #e03e3e;
+    font-size: 0.8rem;
+    padding: 0.6rem 0.75rem;
+    border-radius: 4px;
+    margin-bottom: 1.5rem;
+  }
+
+  .divider {
+    border: none;
+    border-top: 1px solid #e8e8e4;
+    margin: 1.5rem 0;
+  }
+
+  .footer-text {
+    font-size: 0.75rem;
+    color: #b4b4b0;
+  }
+</style>
+</head>
+<body>
+
+<div class="login-container">
+  <div class="logo">Money Moves</div>
+  <p class="subtitle">Autonomous investment engine</p>
+
+  <div id="error-container"></div>
+
+  <a href="/auth/login" class="google-btn">
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
+      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+    </svg>
+    Sign in with Google
+  </a>
+
+  <hr class="divider">
+  <p class="footer-text">Access restricted to authorized accounts</p>
+</div>
+
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const error = params.get('error');
+  if (error) {
+    const container = document.getElementById('error-container');
+    const messages = {
+      unauthorized: 'Your email is not authorized to access this dashboard.',
+      no_email: 'Could not retrieve your email from Google. Please try again.',
+      callback_failed: 'Authentication failed. Please try again.',
+    };
+    const msg = messages[error] || 'An error occurred. Please try again.';
+    container.innerHTML = '<div class="error-msg">' + msg + '</div>';
+  }
+</script>
+
+</body>
+</html>

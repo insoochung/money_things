@@ -166,18 +166,97 @@ class NewsValidator:
             One of 'supporting', 'neutral', 'contradicting'.
         """
         title_lower = article.get("title", "").lower()
+        summary_lower = article.get("summary", "").lower()
+        text = f"{title_lower} {summary_lower}".strip()
 
         # Check failure criteria first (more important to catch)
         for criterion in thesis.failure_criteria:
-            if self._keyword_match(title_lower, criterion):
+            if self._keyword_match(text, criterion):
                 return "contradicting"
 
         # Check validation criteria
         for criterion in thesis.validation_criteria:
-            if self._keyword_match(title_lower, criterion):
+            if self._keyword_match(text, criterion):
                 return "supporting"
 
         return "neutral"
+
+    def score_news_item(
+        self,
+        headline: str,
+        url: str,
+        summary: str,
+        thesis: Thesis,
+    ) -> dict:
+        """Score a single news item against a thesis with detailed breakdown.
+
+        Computes keyword overlap + sentiment heuristics for a richer score
+        than the simple supporting/neutral/contradicting classification.
+
+        Args:
+            headline: Article headline text.
+            url: Article URL.
+            summary: Article summary/snippet text.
+            thesis: Thesis to score against.
+
+        Returns:
+            Dict with keys: headline, url, sentiment, score (float 0-1),
+            matched_keywords (list), explanation (str).
+        """
+        article = {"title": headline, "url": url, "summary": summary}
+        sentiment = self.score_article(article, thesis)
+
+        text = f"{headline} {summary}".lower()
+
+        # Compute keyword overlap score
+        all_keywords = self._extract_keywords(thesis)
+        matched = [kw for kw in all_keywords if kw.lower() in text]
+        keyword_score = len(matched) / max(len(all_keywords), 1)
+
+        # Sentiment heuristics
+        positive_words = {"surge", "growth", "increase", "record", "strong", "rally", "boost", "gains", "bullish", "accelerate"}
+        negative_words = {"decline", "drop", "fall", "cut", "weak", "crash", "loss", "bearish", "slowdown", "plunge"}
+
+        pos_count = sum(1 for w in positive_words if w in text)
+        neg_count = sum(1 for w in negative_words if w in text)
+        sentiment_bias = (pos_count - neg_count) / max(pos_count + neg_count, 1)
+
+        # Combined score: keyword overlap weighted more heavily
+        score = keyword_score * 0.7 + (0.5 + sentiment_bias * 0.5) * 0.3
+        score = max(0.0, min(1.0, score))
+
+        explanation_parts: list[str] = []
+        if matched:
+            explanation_parts.append(f"matched keywords: {', '.join(matched)}")
+        if sentiment_bias > 0:
+            explanation_parts.append("positive sentiment")
+        elif sentiment_bias < 0:
+            explanation_parts.append("negative sentiment")
+
+        return {
+            "headline": headline,
+            "url": url,
+            "sentiment": sentiment,
+            "score": round(score, 3),
+            "matched_keywords": matched,
+            "explanation": "; ".join(explanation_parts) if explanation_parts else "no strong signals",
+        }
+
+    def _extract_keywords(self, thesis: Thesis) -> list[str]:
+        """Extract all significant keywords from a thesis's criteria and metadata.
+
+        Args:
+            thesis: Thesis model.
+
+        Returns:
+            List of keyword strings (length > 3).
+        """
+        sources = thesis.validation_criteria + thesis.failure_criteria + [thesis.title]
+        sources.extend(thesis.symbols)
+        words: list[str] = []
+        for src in sources:
+            words.extend(w for w in src.split() if len(w) > 3)
+        return list(set(words))
 
     def _keyword_match(self, text: str, criterion: str) -> bool:
         """Check if a criterion's keywords appear in text.
@@ -200,6 +279,59 @@ class NewsValidator:
         matches = sum(1 for w in words if w in text)
         threshold = min(2, len(words))
         return matches >= threshold
+
+    def score_news_batch(
+        self,
+        thesis_id: int,
+        news_items: list[dict],
+    ) -> list[dict]:
+        """Score a batch of externally-provided news items against a thesis.
+
+        Use this when news items are provided from an external source (e.g.,
+        a web_search tool or RSS feed) rather than fetched internally.
+
+        Args:
+            thesis_id: ID of the thesis to score against.
+            news_items: List of dicts with keys: headline, url, summary.
+
+        Returns:
+            List of scored item dicts. Empty list if thesis not found.
+        """
+        thesis = self.thesis_engine.get_thesis(thesis_id)
+        if not thesis:
+            return []
+
+        results: list[dict] = []
+        for item in news_items:
+            scored = self.score_news_item(
+                headline=item.get("headline", ""),
+                url=item.get("url", ""),
+                summary=item.get("summary", ""),
+                thesis=thesis,
+            )
+
+            # Store in thesis_news, skip duplicates by URL
+            url = item.get("url", "")
+            if url:
+                existing = self.db.fetchone(
+                    "SELECT id FROM thesis_news WHERE thesis_id = ? AND url = ?",
+                    (thesis_id, url),
+                )
+                if existing:
+                    continue
+
+            self.db.execute(
+                """INSERT INTO thesis_news
+                   (thesis_id, headline, url, sentiment)
+                   VALUES (?, ?, ?, ?)""",
+                (thesis_id, scored["headline"], scored["url"], scored["sentiment"]),
+            )
+            results.append(scored)
+
+        if results:
+            self.db.connect().commit()
+
+        return results
 
     def validate_thesis(self, thesis_id: int) -> dict:
         """Run full validation cycle for a single thesis.

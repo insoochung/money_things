@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from db.database import Database
     from engine.analytics import AnalyticsEngine
     from engine.congress import CongressTradesEngine
+    from engine.news_validator import NewsValidator
     from engine.signals import SignalEngine
     from engine.thesis import ThesisEngine
     from engine.whatif import WhatIfEngine
@@ -147,3 +148,37 @@ def job_stale_thesis_check(thesis_engine: ThesisEngine, db: Database) -> None:
                 logger.info("stale_thesis_check: flagged thesis %d as weakening", row["id"])
             except Exception:
                 logger.exception("stale_thesis_check: failed to flag thesis %d", row["id"])
+
+
+def job_news_scan(
+    validator: "NewsValidator",
+) -> None:
+    """Validate all active theses against news (global scan).
+
+    Calls the NewsValidator to search for and score news articles matching
+    each active thesis's validation and failure criteria.
+
+    Args:
+        validator: NewsValidator instance.
+    """
+    from engine.news_validator import NewsValidator
+
+    logger.info("news_scan: validating all active theses")
+    try:
+        results = validator.validate_all()
+        total_articles = sum(r.get("articles_found", 0) for r in results)
+        transitions = [r for r in results if r.get("transition")]
+        logger.info(
+            "news_scan: checked %d theses, found %d articles, %d transitions",
+            len(results),
+            total_articles,
+            len(transitions),
+        )
+        for t in transitions:
+            logger.info(
+                "news_scan: thesis %d transitioned to %s",
+                t["thesis_id"],
+                t["transition"],
+            )
+    except Exception:
+        logger.exception("news_scan: failed")

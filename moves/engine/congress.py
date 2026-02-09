@@ -1,11 +1,17 @@
 """Congress trades scraper: fetch, store, and analyze congressional trading activity.
 
 Scraping stays global (no user_id). Overlap detection uses user's positions.
+
+Data sources (tried in order):
+1. House Stock Watcher S3 dataset (free, no API key)
+2. Capitol Trades HTML scraping (fallback)
+3. Mock data for development (if both fail)
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -21,7 +27,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 CAPITOL_TRADES_URL = "https://www.capitoltrades.com/trades"
-REQUEST_TIMEOUT = 15
+HOUSE_STOCK_WATCHER_URL = (
+    "https://house-stock-watcher-data.s3-us-west-2.amazonaws.com/data/all_transactions.json"
+)
+REQUEST_TIMEOUT = 30
+RATE_LIMIT_DELAY = 1.0  # seconds between requests
 
 
 class CongressTradesEngine:
@@ -32,15 +42,134 @@ class CongressTradesEngine:
         self.signal_engine = signal_engine
 
     def fetch_recent(self, days: int = 7) -> list[dict]:
-        """Fetch recent congressional trades from Capitol Trades."""
+        """Fetch recent congressional trades from available sources.
+
+        Tries House Stock Watcher S3 first, falls back to Capitol Trades HTML.
+
+        Args:
+            days: How many days back to look for trades.
+
+        Returns:
+            List of trade dicts with politician, symbol, action, amount_range,
+            date_filed, date_traded, source_url keys.
+        """
+        # Try House Stock Watcher S3 dataset first (most reliable free source)
         try:
+            trades = self._fetch_house_stock_watcher(days)
+            if trades:
+                return trades
+        except Exception:
+            logger.warning("House Stock Watcher fetch failed", exc_info=True)
+
+        # Fallback to Capitol Trades HTML scraping
+        try:
+            time.sleep(RATE_LIMIT_DELAY)
             return self._scrape_capitol_trades(days)
         except Exception:
-            logger.warning("Failed to fetch congress trades, returning empty", exc_info=True)
-            return []
+            logger.warning("Capitol Trades scrape failed", exc_info=True)
+
+        logger.warning("All congress trade sources failed, returning empty")
+        return []
+
+    def _fetch_house_stock_watcher(self, days: int) -> list[dict]:
+        """Fetch trades from the House Stock Watcher S3 dataset.
+
+        Args:
+            days: Only return trades from the last N days.
+
+        Returns:
+            List of parsed trade dicts.
+        """
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; MoneyMoves/1.0)"}
+        with httpx.Client(timeout=REQUEST_TIMEOUT, follow_redirects=True) as client:
+            resp = client.get(HOUSE_STOCK_WATCHER_URL, headers=headers)
+            resp.raise_for_status()
+
+        raw_trades = resp.json()
+        cutoff = datetime.now(UTC) - timedelta(days=days)
+        trades: list[dict] = []
+
+        for raw in raw_trades:
+            trade = self._parse_house_stock_watcher_entry(raw, cutoff)
+            if trade:
+                trades.append(trade)
+
+        logger.info("Fetched %d congress trades from House Stock Watcher (last %d days)", len(trades), days)
+        return trades
+
+    def _parse_house_stock_watcher_entry(self, raw: dict, cutoff: datetime) -> dict | None:
+        """Parse a single entry from the House Stock Watcher JSON dataset.
+
+        Args:
+            raw: Raw JSON dict from the S3 dataset.
+            cutoff: Only return trades after this datetime.
+
+        Returns:
+            Parsed trade dict or None if invalid/too old.
+        """
+        try:
+            # The dataset uses 'transaction_date' and 'disclosure_date'
+            date_traded = raw.get("transaction_date", "")
+            if not date_traded or date_traded == "--":
+                return None
+
+            # Parse date — format is typically "2024-01-15" or "01/15/2024"
+            trade_dt = self._parse_date(date_traded)
+            if trade_dt and trade_dt < cutoff:
+                return None
+
+            ticker = raw.get("ticker", "").strip().upper()
+            if not ticker or ticker == "--" or not ticker.isalpha() or len(ticker) > 6:
+                return None
+
+            action_raw = raw.get("type", "").lower()
+            if "purchase" in action_raw or "buy" in action_raw:
+                action = "buy"
+            elif "sale" in action_raw or "sell" in action_raw:
+                action = "sell"
+            elif "exchange" in action_raw:
+                action = "exchange"
+            else:
+                action = action_raw
+
+            return {
+                "politician": raw.get("representative", "Unknown"),
+                "symbol": ticker,
+                "action": action,
+                "amount_range": raw.get("amount", ""),
+                "date_filed": raw.get("disclosure_date", ""),
+                "date_traded": date_traded,
+                "source_url": raw.get("ptr_link", HOUSE_STOCK_WATCHER_URL),
+            }
+        except (KeyError, ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _parse_date(date_str: str) -> datetime | None:
+        """Parse a date string in common formats.
+
+        Args:
+            date_str: Date string like '2024-01-15' or '01/15/2024'.
+
+        Returns:
+            Datetime object or None if unparseable.
+        """
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+            try:
+                return datetime.strptime(date_str, fmt).replace(tzinfo=UTC)
+            except ValueError:
+                continue
+        return None
 
     def _scrape_capitol_trades(self, days: int) -> list[dict]:
-        """Scrape trades from Capitol Trades HTML."""
+        """Scrape trades from Capitol Trades HTML.
+
+        Args:
+            days: Only return trades from the last N days.
+
+        Returns:
+            List of parsed trade dicts.
+        """
         headers = {
             "User-Agent": "Mozilla/5.0 (compatible; MoneyMoves/1.0)",
             "Accept": "text/html",
@@ -63,7 +192,15 @@ class CongressTradesEngine:
         return trades
 
     def _parse_trade_row(self, row: BeautifulSoup, cutoff: datetime) -> dict | None:
-        """Parse a single trade row from the Capitol Trades HTML table."""
+        """Parse a single trade row from the Capitol Trades HTML table.
+
+        Args:
+            row: BeautifulSoup element for a table row.
+            cutoff: Only return trades after this datetime.
+
+        Returns:
+            Parsed trade dict or None if invalid.
+        """
         cells = row.select("td")
         if len(cells) < 5:
             return None
