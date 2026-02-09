@@ -3,6 +3,8 @@
 ## Revision History
 - v0.1: Initial draft
 - v0.2: Self-review — fixed announce callback gap, added human gate, clarified spawner limitations, added portfolio-level review
+- v0.3: Signal generator rethink from original journal insights
+- v0.4: Thesis-first philosophy — tickers are outputs of theses, not inputs
 
 ---
 
@@ -30,6 +32,31 @@
 ---
 
 ## 2. Core Problems to Solve
+
+### P0: Thesis-First — Tickers Are Outputs, Not Inputs
+**Problem:** The original journal went ticker→thesis. The new system inverts this to thesis→tickers. But the current implementation still treats thesis symbols as static — you set them when creating the thesis and they don't evolve.
+
+**Solution:** The research sub-agent's primary job is thesis development, which INCLUDES discovering and evolving the ticker universe:
+
+```
+/think "AI will eat cybersecurity"
+    │
+    ├─► Creates draft thesis (no tickers yet)
+    ├─► Research agent investigates the macro belief
+    ├─► Agent discovers: CRWD, PANW, ZS, FTNT fit the thesis
+    ├─► Agent sets entry criteria for each
+    ├─► Thesis updated with symbols + watchlist triggers
+    │
+    ├─► 3 months later, /think "AI cybersecurity" again
+    ├─► Agent finds: ZS execution is weak, remove from thesis
+    ├─► Agent finds: S (SentinelOne) now fits better
+    ├─► Thesis symbols updated: CRWD, PANW, FTNT, S
+    └─► Watchlist triggers updated accordingly
+```
+
+**Key principle:** The thesis OWNS its tickers. Adding/removing tickers from a thesis is a research output, not a manual action. The human approves (via Munny's gate), but the research agent proposes.
+
+**Signal generator implication:** When scanning, it asks "what do this thesis's current symbols look like?" — and those symbols may have changed since last scan because research evolved them.
 
 ### P1: Context Isolation (Airlock)
 **Problem:** Shared thoughts DB, no query scoping. A cybersecurity research session could read biotech notes.
