@@ -375,3 +375,70 @@ class ThoughtsEngine:
         return self._moves_query(
             "SELECT * FROM trades ORDER BY timestamp DESC LIMIT ?", (limit,)
         )
+
+    def complete_session(self, session_id: int, summary: str = "") -> None:
+        """Mark a session as completed with summary."""
+        self.update_session(session_id, status="completed", summary=summary)
+
+    def update_thesis_conviction(
+        self, thesis_id: int, conviction: float
+    ) -> bool:
+        """Update thesis conviction in moves DB.
+
+        Args:
+            thesis_id: Thesis to update.
+            conviction: New conviction (0-100 scale).
+
+        Returns:
+            True if a row was updated.
+        """
+        if not self.moves_db.exists():
+            return False
+        with _connect(self.moves_db) as conn:
+            cur = conn.execute(
+                "UPDATE theses SET conviction = ?, updated_at = datetime('now') "
+                "WHERE id = ?",
+                (conviction, thesis_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def update_thesis(
+        self,
+        thesis_id: int,
+        title: str | None = None,
+        description: str | None = None,
+        status: str | None = None,
+    ) -> bool:
+        """Update thesis fields in moves DB.
+
+        Args:
+            thesis_id: Thesis to update.
+            title: New title if provided.
+            description: New thesis_text if provided.
+            status: New status if provided.
+
+        Returns:
+            True if a row was updated.
+        """
+        if not self.moves_db.exists():
+            return False
+        parts: list[str] = ["updated_at = datetime('now')"]
+        params: list[Any] = []
+        if title is not None:
+            parts.append("title = ?")
+            params.append(title)
+        if description is not None:
+            parts.append("thesis_text = ?")
+            params.append(description)
+        if status is not None:
+            parts.append("status = ?")
+            params.append(status)
+        params.append(thesis_id)
+        with _connect(self.moves_db) as conn:
+            cur = conn.execute(
+                f"UPDATE theses SET {', '.join(parts)} WHERE id = ?",
+                params,
+            )
+            conn.commit()
+            return cur.rowcount > 0
