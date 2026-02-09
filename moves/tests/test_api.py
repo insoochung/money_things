@@ -42,7 +42,7 @@ class TestApp:
     def test_app_creation(self) -> None:
         """Test that the FastAPI app can be created."""
         app = create_app()
-        assert app.title == "Money Moves"
+        assert app.title == "Munny Thoughts"
         assert app.version == "2.1.0"
 
     def test_health_endpoint(self, seeded_db: Database) -> None:
@@ -70,7 +70,7 @@ class TestApp:
 
         response = client.get("/")
         assert response.status_code == 200
-        assert "Money Moves" in response.text
+        assert "Munny Thoughts" in response.text
 
 
 class TestAuthentication:
@@ -118,9 +118,9 @@ class TestAuthentication:
         app = create_app()
         client = TestClient(app)
 
-        response = client.get("/auth/login")
-        assert response.status_code == 200
-        assert "password" in response.text.lower()
+        response = client.get("/auth/login", follow_redirects=False)
+        # Google OAuth: redirects to Google, or password form
+        assert response.status_code in (200, 302)
 
     def test_logout_redirects(self, seeded_db: Database) -> None:
         """Test logout clears session and redirects."""

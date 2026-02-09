@@ -43,7 +43,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 import yfinance as yf
-
 from utils.config import FINNHUB_API_KEY, YFINANCE_DELAY
 
 # Track last request time for rate limiting

@@ -39,7 +39,6 @@ import time
 from typing import Any
 
 import requests
-
 from utils.config import POLYMARKET_GAMMA_URL, POLYMARKET_RATE_LIMIT
 
 # Track last request time for rate limiting
