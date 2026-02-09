@@ -148,6 +148,37 @@ def cmd_thought(text: str) -> str:
     return f"💭 Thought #{thought_id} captured."
 
 
+def cmd_onboard(answers: dict[str, str] | None = None) -> str:
+    """Run onboarding to generate an investor profile.
+
+    Args:
+        answers: Optional dict of interview answers keyed by question ID.
+            If None, returns the interview questions formatted for Telegram.
+
+    Returns:
+        Interview questions or profile summary.
+    """
+    from onboard import OnboardingEngine
+
+    engine = _get_engine()
+    bridge = _get_bridge()
+    onboard = OnboardingEngine(engine, bridge)
+
+    if answers is None:
+        questions = onboard.get_interview_questions()
+        lines = ["📋 *Investor Onboarding*\n"]
+        lines.append("Reply with `/onboard` followed by numbered answers:\n")
+        for i, q in enumerate(questions, 1):
+            lines.append(f"{i}. {q['question']}")
+        lines.append("\nExample:")
+        lines.append("`/onboard 1. Growth 2. Months 3. Tech 4. Moderate ...`")
+        return "\n".join(lines)
+
+    profile = onboard.get_combined_profile(answers)
+    onboard.save_profile(profile)
+    return f"✅ Investor profile saved!\n\n{profile[:1500]}"
+
+
 def cmd_research(symbol: str) -> str:
     """Trigger a deep-dive research session on a symbol.
 

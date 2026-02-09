@@ -115,6 +115,29 @@ def _signal_keyboard(signal_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def _parse_onboard_answers(raw: str, questions: list[dict]) -> dict[str, str]:
+    """Parse numbered answers into a dict keyed by question ID.
+
+    Supports formats like "1. Answer 2. Answer" or "1) Answer 2) Answer".
+
+    Args:
+        raw: Raw text with numbered answers.
+        questions: List of question dicts with 'id' keys.
+
+    Returns:
+        Dict mapping question IDs to answers.
+    """
+    import re
+
+    parts = re.split(r"\d+[\.\)]\s*", raw)
+    parts = [p.strip() for p in parts if p.strip()]
+    answers: dict[str, str] = {}
+    for i, part in enumerate(parts):
+        if i < len(questions):
+            answers[questions[i]["id"]] = part
+    return answers
+
+
 class MoneyMovesBot:
     """Telegram bot for signal approval and portfolio status.
 
@@ -158,6 +181,7 @@ class MoneyMovesBot:
         self.app.add_handler(CommandHandler("review", self.cmd_review))
         self.app.add_handler(CommandHandler("thought", self.cmd_thought))
         self.app.add_handler(CommandHandler("research", self.cmd_research))
+        self.app.add_handler(CommandHandler("onboard", self.cmd_onboard))
         self.app.add_handler(CallbackQueryHandler(self._handle_callback))
 
         await self.app.initialize()
@@ -327,7 +351,8 @@ class MoneyMovesBot:
             "/journal — List thought threads\n"
             "/review <symbol> — Research take on symbol\n"
             "/thought <text> — Quick observation\n"
-            "/research <symbol> — Deep-dive research\n\n"
+            "/research <symbol> — Deep-dive research\n"
+            "/onboard — Investor profile setup\n\n"
             "Signal notifications appear here with "
             "Approve/Reject buttons when generated."
         )
@@ -404,6 +429,32 @@ class MoneyMovesBot:
             await update.message.reply_text("Usage: /thought <your observation>")
             return
         await self._run_thoughts_cmd("cmd_thought", text, update)
+
+    async def cmd_onboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /onboard — investor profile onboarding.
+
+        Without args: shows interview questions.
+        With numbered answers: generates and saves profile.
+        """
+        raw = " ".join(context.args) if context.args else ""
+        try:
+            import sys
+
+            sys.path.insert(0, "/root/.openclaw/workspace/money")
+            from thoughts import commands as tc
+            from thoughts.onboard import INTERVIEW_QUESTIONS
+
+            if not raw:
+                result = tc.cmd_onboard()
+                await update.message.reply_text(result, parse_mode="Markdown")
+                return
+
+            answers = _parse_onboard_answers(raw, INTERVIEW_QUESTIONS)
+            result = tc.cmd_onboard(answers)
+            await update.message.reply_text(result)
+        except Exception as e:
+            logger.exception("Onboard error: %s", e)
+            await update.message.reply_text(f"⚠️ Onboard error: {e}")
 
     async def cmd_research(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /research <symbol> — trigger deep-dive research."""

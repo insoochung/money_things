@@ -79,6 +79,11 @@ engine.add_thought(content="Something interesting...", linked_symbol="AAPL")
 bridge.push_thesis_update(thesis_id=1, conviction=0.8, status="strengthening", reasoning="...")
 ```
 
+## Investor Profile
+Read ~/workspace/money/thoughts/data/investor_profile.md at the start of every session.
+This contains the user's investing style, risk tolerance, sector expertise, and convictions.
+Tailor all research and recommendations to this profile.
+
 ## Rules
 
 1. All numbers from APIs/Python — never estimate prices or metrics
