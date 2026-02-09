@@ -187,6 +187,7 @@ def _register_google_routes(
     @router.get("/callback")
     async def callback(request: Request) -> RedirectResponse:
         """Handle Google OAuth callback."""
+        print(f"[AUTH] Callback hit: {request.url}", flush=True)
         settings_now = get_settings()
         try:
             token = await oauth.google.authorize_access_token(request)
@@ -213,7 +214,12 @@ def _register_google_routes(
             logger.info("Google OAuth login: %s", email)
             return response
         except Exception as e:
-            logger.error("OAuth callback error: %s", e)
+            import traceback
+            tb = traceback.format_exc()
+            logger.error("OAuth callback error: %s (type=%s)", e, type(e).__name__)
+            logger.error("OAuth traceback:\n%s", tb)
+            print(f"[AUTH ERROR] {e}", flush=True)
+            print(f"[AUTH TRACEBACK]\n{tb}", flush=True)
             return RedirectResponse("/auth/login", status_code=303)
 
 

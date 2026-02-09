@@ -354,6 +354,8 @@ def create_app() -> FastAPI:
     app.add_middleware(
         SessionMiddleware,
         secret_key=get_settings().session_secret_key or "dev-secret-change-me",
+        session_cookie="oauth_session",  # Avoid conflict with auth 'session' cookie
+        same_site="lax",
     )
 
     # Health check endpoint (unprotected)
