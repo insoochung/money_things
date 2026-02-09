@@ -19,7 +19,7 @@ Dependencies:
 from __future__ import annotations
 
 import logging
-import random
+import math
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -303,22 +303,47 @@ async def get_correlation_matrix(
 
         symbols = [p["symbol"] for p in positions]
 
-        # Mock correlation matrix (would calculate from price history)
-        import random
+        # Compute correlations from 3-month daily returns
+        from engine import pricing
 
-        random.seed(42)  # Consistent results
+        returns_by_symbol: dict[str, list[float]] = {}
+        for sym in symbols:
+            hist = pricing.get_history(sym, period="3mo")
+            if len(hist) >= 2:
+                closes = [h["close"] for h in hist]
+                rets = [
+                    (closes[i] - closes[i - 1]) / closes[i - 1]
+                    for i in range(1, len(closes))
+                    if closes[i - 1] != 0
+                ]
+                returns_by_symbol[sym] = rets
+
+        def _pearson(a: list[float], b: list[float]) -> float:
+            n = min(len(a), len(b))
+            if n < 5:
+                return 0.0
+            a, b = a[:n], b[:n]
+            ma = sum(a) / n
+            mb = sum(b) / n
+            cov = sum((a[i] - ma) * (b[i] - mb) for i in range(n))
+            sa = math.sqrt(sum((x - ma) ** 2 for x in a))
+            sb = math.sqrt(sum((x - mb) ** 2 for x in b))
+            if sa == 0 or sb == 0:
+                return 0.0
+            return cov / (sa * sb)
 
         correlations = []
         for i in range(len(symbols)):
             row = []
             for j in range(len(symbols)):
                 if i == j:
-                    row.append(1.0)  # Self-correlation is 1
+                    row.append(1.0)
                 elif i > j:
-                    row.append(correlations[j][i])  # Symmetric matrix
+                    row.append(correlations[j][i])
                 else:
-                    # Generate realistic correlation (-0.5 to 0.9)
-                    corr = random.uniform(-0.5, 0.9)
+                    ra = returns_by_symbol.get(symbols[i], [])
+                    rb = returns_by_symbol.get(symbols[j], [])
+                    corr = _pearson(ra, rb)
                     row.append(round(corr, 3))
             correlations.append(row)
 
@@ -421,14 +446,40 @@ async def get_risk_heatmap(
             market_value = shares * current_price
             weight_pct = (market_value / nav * 100) if nav > 0 else 0.0
 
-            # Calculate risk metrics (simplified)
+            # Calculate risk metrics
             unrealized_pnl = (current_price - avg_cost) * shares
             unrealized_pnl_pct = (
                 (unrealized_pnl / (shares * avg_cost) * 100) if shares * avg_cost > 0 else 0.0
             )
 
-            # Risk score based on weight and volatility (simplified)
-            risk_score = weight_pct * 2 + abs(unrealized_pnl_pct) * 0.1
+            # Compute 30-day annualized volatility from price history
+            from engine import pricing as _pricing
+
+            hist = _pricing.get_history(symbol, period="3mo")
+            if len(hist) >= 2:
+                closes = [h["close"] for h in hist]
+                daily_rets = [
+                    (closes[i] - closes[i - 1]) / closes[i - 1]
+                    for i in range(1, len(closes))
+                    if closes[i - 1] != 0
+                ]
+                # Use last 30 trading days or whatever is available
+                recent_rets = daily_rets[-30:] if len(daily_rets) > 30 else daily_rets
+                if recent_rets:
+                    mean_r = sum(recent_rets) / len(recent_rets)
+                    var = sum((r - mean_r) ** 2 for r in recent_rets) / len(recent_rets)
+                    vol_annual = math.sqrt(var) * math.sqrt(252) * 100
+                else:
+                    vol_annual = 25.0
+            else:
+                vol_annual = 25.0
+
+            # Get sector from fundamentals
+            fundamentals = _pricing.get_fundamentals(symbol)
+            position_sector = fundamentals.get("sector") or "Unknown"
+
+            # Risk score based on weight and volatility
+            risk_score = weight_pct * 2 + vol_annual * 0.1 + abs(unrealized_pnl_pct) * 0.05
 
             # Risk bucket classification
             if risk_score < 5:
@@ -451,7 +502,7 @@ async def get_risk_heatmap(
                     "risk_score": round(risk_score, 2),
                     "risk_bucket": risk_bucket,
                     "thesis_title": position["thesis_title"],
-                    "volatility": random.uniform(15, 45),  # Mock volatility
+                    "volatility": round(vol_annual, 1),
                 }
             )
 
@@ -466,8 +517,8 @@ async def get_risk_heatmap(
                     }
                 )
 
-            # Group by sector (mock sector classification)
-            sector = "Technology"  # Simplified - would classify based on symbol
+            # Group by sector from fundamentals
+            sector = position_sector
             if sector not in sector_data:
                 sector_data[sector] = {
                     "sector": sector,
@@ -535,25 +586,53 @@ async def get_macro_indicators(
         MacroIndicators model with current indicator values.
     """
     try:
-        # Mock data (would fetch from pricing service)
+        from engine import pricing as _pricing
+
+        # Fetch live prices for macro symbols
+        macro_symbols = {
+            "vix": "^VIX",
+            "ten_year": "^TNX",
+            "dxy": "DX-Y.NYB",
+            "oil": "CL=F",
+            "gold": "GC=F",
+            "btc": "BTC-USD",
+            "spy": "SPY",
+            "qqq": "QQQ",
+        }
+
+        prices = {}
+        for key, sym in macro_symbols.items():
+            try:
+                data = _pricing.get_price(sym)
+                prices[key] = {
+                    "price": data.get("price", 0) if data else 0,
+                    "change_pct": data.get("change_pct", 0) if data else 0,
+                }
+            except Exception:
+                prices[key] = {"price": 0, "change_pct": 0}
+
+        vix_price = prices["vix"]["price"]
+        # Market sentiment: VIX < 15 = bullish (positive), > 25 = bearish (negative)
+        sentiment = max(-100, min(100, (20 - vix_price) * 5)) if vix_price > 0 else 0.0
+
         indicators = MacroIndicators(
-            vix=19.85,
-            vix_change_pct=2.3,
-            ten_year_yield=4.22,
-            ten_year_change_bp=3.5,
-            dxy=102.45,
-            dxy_change_pct=-0.8,
-            oil_price=73.25,
-            oil_change_pct=1.2,
-            gold_price=2065.50,
-            gold_change_pct=-0.5,
-            btc_price=42850.00,
-            btc_change_pct=3.8,
-            spy_price=485.25,
-            spy_change_pct=0.9,
-            qqq_price=395.80,
-            qqq_change_pct=1.4,
-            market_sentiment=15.0,  # Slightly bullish
+            vix=vix_price,
+            vix_change_pct=prices["vix"]["change_pct"],
+            ten_year_yield=prices["ten_year"]["price"],
+            ten_year_change_bp=prices["ten_year"]["change_pct"] * 100,
+            dxy=prices["dxy"]["price"],
+            dxy_change_pct=prices["dxy"]["change_pct"],
+            oil_price=prices["oil"]["price"],
+            oil_change_pct=prices["oil"]["change_pct"],
+            gold_price=prices["gold"]["price"],
+            gold_change_pct=prices["gold"]["change_pct"],
+            btc_price=prices["btc"]["price"],
+            btc_change_pct=prices["btc"]["change_pct"],
+            spy_price=prices["spy"]["price"],
+            spy_change_pct=prices["spy"]["change_pct"],
+            qqq_price=prices["qqq"]["price"],
+            qqq_change_pct=prices["qqq"]["change_pct"],
+            market_sentiment=round(sentiment, 1),
         )
 
         return indicators
