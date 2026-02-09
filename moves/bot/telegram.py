@@ -357,7 +357,7 @@ class MoneyMovesBot:
             from thoughts import commands as tc
 
             func = getattr(tc, coro_factory)
-            result = await func(arg) if arg else await func()
+            result = func(arg) if arg else func()
             await update.message.reply_text(result)
         except Exception as e:
             logger.exception("Thoughts command error: %s", e)
@@ -384,7 +384,7 @@ class MoneyMovesBot:
             sys.path.insert(0, "/root/.openclaw/workspace/money")
             from thoughts import commands as tc
 
-            result = await tc.cmd_journal(thesis_id)
+            result = tc.cmd_journal(thesis_id)
             await update.message.reply_text(result)
         except Exception as e:
             logger.exception("Journal error: %s", e)
