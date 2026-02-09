@@ -272,9 +272,20 @@ class TestWashSaleDetection:
 
 
 class TestAccountRecommendation:
-    """Account routing logic: growth → Roth, dividends → Traditional, etc."""
+    """IRA-first account routing: Roth first, taxable as fallback."""
 
-    def test_short_term_goes_to_roth(self, engine):
+    def test_roth_first_when_cash_available(self, engine):
+        from engine import Signal, SignalAction, SignalSource
+        signal = Signal(
+            action=SignalAction.BUY, symbol="NVDA",
+            source=SignalSource.MANUAL,
+        )
+        rec = engine.recommend_account(signal, roth_cash=10000)
+        assert rec.account_type == "roth_ira"
+        assert "roth" in rec.reasoning.lower()
+
+    def test_roth_first_when_cash_unknown(self, engine):
+        """When roth_cash is None (unknown), default to Roth."""
         from engine import Signal, SignalAction, SignalSource
         signal = Signal(
             action=SignalAction.BUY, symbol="CRWD",
@@ -282,19 +293,18 @@ class TestAccountRecommendation:
         )
         rec = engine.recommend_account(signal)
         assert rec.account_type == "roth_ira"
-        assert "short-term" in rec.reasoning.lower()
 
-    def test_default_prefers_roth(self, engine):
+    def test_taxable_when_roth_no_cash(self, engine):
         from engine import Signal, SignalAction, SignalSource
         signal = Signal(
             action=SignalAction.BUY, symbol="NVDA",
-            horizon="2y", source=SignalSource.MANUAL,
+            source=SignalSource.MANUAL,
         )
-        rec = engine.recommend_account(signal)
-        assert rec.account_type == "roth_ira"
+        rec = engine.recommend_account(signal, roth_cash=0)
+        assert rec.account_type == "individual_brokerage"
+        assert "no cash" in rec.reasoning.lower() or "unavailable" in rec.reasoning.lower()
 
     def test_no_roth_falls_to_taxable(self, engine):
-        # Remove Roth account
         engine.db.execute("DELETE FROM accounts WHERE account_type = 'roth_ira'")
         engine.db.connect().commit()
 

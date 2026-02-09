@@ -469,16 +469,14 @@ class TaxEngine:
         self,
         signal: Any,
         current_prices: dict[str, float] | None = None,
+        roth_cash: float | None = None,
     ) -> AccountRecommendation:
         """Recommend which account to execute a trade in.
 
-        Rules:
-        - High-growth/high-turnover → Roth IRA (tax-free gains)
-        - Dividend-heavy stocks (yield > 2%) → Traditional IRA (defer income tax)
-        - Tax-loss harvesting candidates → taxable account
-        - Short-term trades (horizon < 1 year) → Roth IRA (avoid short-term cap gains)
-        - Long-term holds → Roth IRA preferred, then Traditional, then taxable
-        - Consider available cash/buying power per account
+        IRA-first strategy (simple):
+        1. Always trade in Roth IRA first
+        2. If Roth has no cash/buying power → use taxable account
+        3. Wash sale guard applied separately via check_wash_sale()
         """
         accounts = self.db.fetchall(
             "SELECT id, name, account_type FROM accounts WHERE user_id = ? AND active = 1",
@@ -492,77 +490,36 @@ class TaxEngine:
 
         acct_map = {a["account_type"]: a for a in accounts}
         roth = acct_map.get("roth_ira")
-        trad = acct_map.get("traditional_ira")
         taxable = acct_map.get("individual_brokerage")
 
-        # Extract signal properties
-        horizon = getattr(signal, "horizon", "") or ""
-        symbol = getattr(signal, "symbol", "")
-        action = str(getattr(signal, "action", "BUY")).upper()
-
-        # Tax-loss harvesting: must be in taxable account
-        if action == "SELL":
-            prices = current_prices or {}
-            if taxable and symbol in prices:
-                lots = self.get_tax_lots(
-                    account_id=taxable["id"], symbol=symbol,
-                    current_prices=prices,
-                )
-                has_losses = any(lot.unrealized_gain < 0 for lot in lots)
-                if has_losses:
-                    return AccountRecommendation(
-                        account_id=taxable["id"],
-                        account_name=taxable["name"],
-                        account_type=taxable["account_type"],
-                        reasoning="Tax-loss harvesting opportunity in taxable account",
-                        tax_savings_estimate=None,
-                    )
-
-        # Short-term trades → Roth IRA
-        short_horizons = {"1d", "1w", "2w", "1m", "2m", "3m", "6m"}
-        if horizon.lower() in short_horizons and roth:
-            est = self._estimate_savings(signal, "roth_ira")
-            return AccountRecommendation(
-                account_id=roth["id"],
-                account_name=roth["name"],
-                account_type=roth["account_type"],
-                reasoning=f"Short-term trade ({horizon}) → Roth IRA avoids capital gains tax",
-                tax_savings_estimate=est,
-            )
-
-        # Default priority: Roth > Traditional > Taxable
+        # Roth IRA first — if it exists and has cash
         if roth:
-            est = self._estimate_savings(signal, "roth_ira")
-            return AccountRecommendation(
-                account_id=roth["id"],
-                account_name=roth["name"],
-                account_type=roth["account_type"],
-                reasoning="Roth IRA preferred for tax-free growth",
-                tax_savings_estimate=est,
-            )
-        if trad:
-            return AccountRecommendation(
-                account_id=trad["id"],
-                account_name=trad["name"],
-                account_type=trad["account_type"],
-                reasoning="Traditional IRA defers tax on gains",
-                tax_savings_estimate=None,
-            )
+            if roth_cash is None or roth_cash > 0:
+                return AccountRecommendation(
+                    account_id=roth["id"],
+                    account_name=roth["name"],
+                    account_type=roth["account_type"],
+                    reasoning="Roth IRA first — tax-free growth",
+                    tax_savings_estimate=None,
+                )
+
+        # Fallback to taxable
         if taxable:
             return AccountRecommendation(
                 account_id=taxable["id"],
                 account_name=taxable["name"],
                 account_type=taxable["account_type"],
-                reasoning="Only available account (taxable)",
+                reasoning="Taxable account — Roth IRA unavailable or no cash",
                 tax_savings_estimate=None,
             )
 
+        # Whatever's available
         first = accounts[0]
         return AccountRecommendation(
             account_id=first["id"],
             account_name=first["name"],
             account_type=first["account_type"],
-            reasoning="Default account selection",
+            reasoning="Only available account",
             tax_savings_estimate=None,
         )
 
@@ -676,15 +633,3 @@ class TaxEngine:
             params.append(symbol)
         sql += " ORDER BY acquired_date ASC"
         return self.db.fetchall(sql, tuple(params))
-
-    def _estimate_savings(self, signal: Any, target_type: str) -> float | None:
-        """Rough estimate of tax savings from routing to a tax-advantaged account."""
-        size_pct = getattr(signal, "size_pct", None)
-        if not size_pct:
-            return None
-        # Assume $100k portfolio, estimate based on position size
-        estimated_position = 100_000 * size_pct
-        # Assume 20% gain, short-term
-        estimated_gain = estimated_position * 0.20
-        savings = estimated_gain * SHORT_TERM_RATE
-        return round(savings, 2)
