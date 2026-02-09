@@ -243,6 +243,26 @@ async def lifespan(app: FastAPI) -> Any:
 
         logger.info("All engines initialized successfully")
 
+        # Start Telegram bot (skip in testing mode)
+        telegram_bot = None
+        if not settings.testing and settings.telegram_token:
+            try:
+                from bot.telegram import MoneyMovesBot
+
+                telegram_bot = MoneyMovesBot(
+                    db=db,
+                    signal_engine=signal_engine,
+                    broker=broker,
+                    token=settings.telegram_token,
+                    chat_id=int(settings.telegram_chat_id),
+                    mode=settings.mode,
+                )
+                await telegram_bot.start()
+                logger.info("Telegram bot started")
+            except Exception:
+                logger.exception("Failed to start Telegram bot — continuing without it")
+                telegram_bot = None
+
         # Start scheduler (skip in testing mode)
         scheduler = None
         if not settings.testing:
@@ -254,6 +274,14 @@ async def lifespan(app: FastAPI) -> Any:
         logger.error("Failed to initialize application: %s", e)
         raise
     finally:
+        # Shutdown Telegram bot
+        if telegram_bot is not None:
+            try:
+                await telegram_bot.stop()
+                logger.info("Telegram bot stopped")
+            except Exception:
+                logger.exception("Error stopping Telegram bot")
+
         # Shutdown scheduler
         if scheduler is not None:
             try:
