@@ -83,6 +83,7 @@ class Position(BaseModel):
     """
 
     symbol: str = Field(..., description="Stock symbol")
+    ticker: str = Field("", description="Stock symbol alias for dashboard compatibility")
     side: str = Field(..., description="Position side (long/short)")
     shares: float = Field(..., description="Number of shares")
     avg_cost: float = Field(..., description="Average cost per share")
@@ -295,6 +296,7 @@ async def get_positions(
                 result.append(
                     Position(
                         symbol=position["symbol"],
+                        ticker=position["symbol"],
                         side=position["side"],
                         shares=shares,
                         avg_cost=avg_cost,
