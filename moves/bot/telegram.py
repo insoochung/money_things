@@ -153,6 +153,11 @@ class MoneyMovesBot:
         self.app.add_handler(CommandHandler("positions", self.cmd_positions))
         self.app.add_handler(CommandHandler("killswitch", self.cmd_killswitch))
         self.app.add_handler(CommandHandler("mode", self.cmd_mode))
+        self.app.add_handler(CommandHandler("think", self.cmd_think))
+        self.app.add_handler(CommandHandler("journal", self.cmd_journal))
+        self.app.add_handler(CommandHandler("review", self.cmd_review))
+        self.app.add_handler(CommandHandler("thought", self.cmd_thought))
+        self.app.add_handler(CommandHandler("research", self.cmd_research))
         self.app.add_handler(CallbackQueryHandler(self._handle_callback))
 
         await self.app.initialize()
@@ -317,6 +322,12 @@ class MoneyMovesBot:
             "/killswitch — Toggle emergency trading halt\n"
             "/mode — Show current mode\n"
             "/help — This message\n\n"
+            "*Research (Thoughts):*\n"
+            "/think <thesis> — Start research session\n"
+            "/journal — List thought threads\n"
+            "/review <symbol> — Research take on symbol\n"
+            "/thought <text> — Quick observation\n"
+            "/research <symbol> — Deep-dive research\n\n"
             "Signal notifications appear here with "
             "Approve/Reject buttons when generated."
         )
@@ -326,6 +337,80 @@ class MoneyMovesBot:
         """Handle /mode — show current execution mode."""
         mode_label = "Mock" if self.mode == Mode.MOCK else "Live"
         await update.message.reply_text(f"Mode: {mode_label}")
+
+    # --- Thoughts integration ---
+
+    async def _run_thoughts_cmd(
+        self, coro_factory: str, arg: str, update: Update
+    ) -> None:
+        """Run a thoughts command and reply with the result.
+
+        Args:
+            coro_factory: Name of the async function in thoughts.commands.
+            arg: Argument to pass to the command.
+            update: Telegram update for replying.
+        """
+        try:
+            import sys
+
+            sys.path.insert(0, "/root/.openclaw/workspace/money")
+            from thoughts import commands as tc
+
+            func = getattr(tc, coro_factory)
+            result = await func(arg) if arg else await func()
+            await update.message.reply_text(result)
+        except Exception as e:
+            logger.exception("Thoughts command error: %s", e)
+            await update.message.reply_text(f"⚠️ Thoughts error: {e}")
+
+    async def cmd_think(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /think <thesis> — spawn a research session."""
+        args = " ".join(context.args) if context.args else ""
+        if not args:
+            await update.message.reply_text("Usage: /think <thesis name or ID>")
+            return
+        await self._run_thoughts_cmd("cmd_think", args, update)
+
+    async def cmd_journal(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /journal — list active thought threads."""
+        arg = context.args[0] if context.args else None
+        try:
+            thesis_id = int(arg) if arg else None
+        except ValueError:
+            thesis_id = None
+        try:
+            import sys
+
+            sys.path.insert(0, "/root/.openclaw/workspace/money")
+            from thoughts import commands as tc
+
+            result = await tc.cmd_journal(thesis_id)
+            await update.message.reply_text(result)
+        except Exception as e:
+            logger.exception("Journal error: %s", e)
+            await update.message.reply_text(f"⚠️ Error: {e}")
+
+    async def cmd_review(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /review <symbol> — get research take on a symbol."""
+        if not context.args:
+            await update.message.reply_text("Usage: /review <SYMBOL>")
+            return
+        await self._run_thoughts_cmd("cmd_review", context.args[0].upper(), update)
+
+    async def cmd_thought(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /thought <text> — capture a quick thought."""
+        text = " ".join(context.args) if context.args else ""
+        if not text:
+            await update.message.reply_text("Usage: /thought <your observation>")
+            return
+        await self._run_thoughts_cmd("cmd_thought", text, update)
+
+    async def cmd_research(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /research <symbol> — trigger deep-dive research."""
+        if not context.args:
+            await update.message.reply_text("Usage: /research <SYMBOL>")
+            return
+        await self._run_thoughts_cmd("cmd_research", context.args[0].upper(), update)
 
     # --- Signal expiry ---
 
