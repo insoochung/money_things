@@ -610,9 +610,11 @@
   // ── 10. Performance Chart ──
   async function loadPerformance() {
     try {
+      const rangeDays = { '1M': 30, '3M': 90, '6M': 180, '1Y': 365, 'ALL': 1825 };
+      const days = rangeDays[state.perfRange] || 90;
       const [perf, bench] = await Promise.all([
-        api('/api/fund/performance'),
-        api('/api/fund/benchmark'),
+        api(`/api/fund/performance?days=${days}`),
+        api(`/api/fund/benchmark?days=${days}`),
       ]);
       state.perfData = perf;
       state.benchData = bench;
