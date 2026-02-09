@@ -79,9 +79,9 @@ Live at **https://munnythoughts.com** with Google OAuth.
 
 | Module | Lines | Tests | Lint | Grade |
 |--------|-------|-------|------|-------|
-| moves/ | ~22K | 451 | ✅ | A |
+| moves/ | ~22K | 491 | ✅ | A |
 | thoughts/ | ~12K | 192 | ✅ | A |
-| **Total** | **34K** | **643** | **✅** | **A** |
+| **Total** | **34K** | **683** | **✅** | **A** |
 
 **Thoughts grade rationale (A):** Core engine, bridge, commands, feedback loop, daily briefing, and trigger monitoring all work. Sub-agent output is parsed, auto-applied, and presented with approve/reject buttons. The full /think → research → parse → approve → DB update pipeline is functional. `/brief` provides daily overview with live prices, trigger proximity, and earnings.
 
@@ -89,4 +89,4 @@ Live at **https://munnythoughts.com** with Google OAuth.
 
 ## Recommendation
 
-**Next session priority**: Import journal research data as notes (P2 #7) or dashboard auth bypass testing (P1 #3). Daily workflow now has `/brief` for morning check-ins and `trigger_monitor` for proactive alerts. The core /think loop, test infrastructure, and scoring pipeline are all fully functional.
+**Next session priority**: Import journal research data as notes (P2 #7) — deferred per user. System is ready for real use: all commands functional, dashboard auth-aware, 683 tests passing. Daily workflow: `/brief` for morning check-ins, `trigger_monitor` for proactive alerts, `/think` for research. Core loop fully operational.
