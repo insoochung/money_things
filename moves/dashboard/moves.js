@@ -674,27 +674,93 @@
   async function loadPrinciples() {
     try {
       const d = await api('/api/fund/principles');
-      const arr = Array.isArray(d) ? d : d.principles || [];
-      if (!arr.length) { $('#principles-list').innerHTML = emptyHTML('No principles defined'); return; }
-      $('#principles-list').innerHTML = arr.map(p => {
-        const val = p.validated ?? 0;
-        const inv = p.invalidated ?? 0;
-        const total = val + inv || 1;
-        const pct = (val / total) * 100;
-        return `<div class="principle-item">
-          <div class="principle-text">${p.text || p.principle}</div>
-          <div class="principle-meta">
-            ${p.category ? `<span class="badge badge-muted">${p.category}</span>` : ''}
-            <span>✓ ${val}</span><span>✗ ${inv}</span>
-            <div class="validation-bar"><div class="vb-green" style="width:${pct}%"></div></div>
-            ${p.last_applied ? `<span>Last: ${relTime(p.last_applied)}</span>` : ''}
-          </div>
+      const principles = d.principles || [];
+      const summary = d.summary || {};
+      const discoveries = d.discoveries || [];
+
+      // Summary strip
+      const summaryEl = $('#principles-summary');
+      if (summary.total_active != null) {
+        summaryEl.innerHTML = `
+          <span class="ps-stat"><strong>${summary.total_active}</strong> active</span>
+          <span class="ps-stat"><strong>${summary.validation_rate != null ? fmtPct(summary.validation_rate * 100) : '—'}</strong> win rate</span>
+          <span class="ps-stat">✓ ${summary.total_validated ?? 0} · ✗ ${summary.total_invalidated ?? 0}</span>
+          ${discoveries.length ? `<span class="ps-discovery-badge">${discoveries.length} pattern${discoveries.length > 1 ? 's' : ''} discovered</span>` : ''}
+          ${summary.last_check ? `<span class="ps-stat">Checked ${relTime(summary.last_check)}</span>` : ''}
+        `;
+      } else {
+        summaryEl.innerHTML = '';
+      }
+
+      // Principle cards
+      if (!principles.length) { $('#principles-list').innerHTML = emptyHTML('No principles defined'); }
+      else {
+        $('#principles-list').innerHTML = principles.map(p => {
+          const val = p.validated_count ?? p.validated ?? 0;
+          const inv = p.invalidated_count ?? p.invalidated ?? 0;
+          const total = val + inv || 1;
+          const winPct = Math.round((val / total) * 100);
+          const losePct = 100 - winPct;
+          const cat = (p.category || '').toLowerCase();
+          const origin = (p.origin || '').replace(/_/g, ' ');
+          const atRisk = inv > val * 2 && inv > 2;
+          const weight = p.weight != null ? p.weight : 0.05;
+
+          return `<div class="principle-card" onclick="this.classList.toggle('open')">
+            <div class="principle-header">
+              <span class="principle-text">${p.text || p.principle}</span>
+              ${cat ? `<span class="category-badge cat-${cat}">${cat}</span>` : ''}
+              <div class="principle-bar-wrap">
+                <div class="validation-bar"><div class="vb-green" style="width:${winPct}%"></div><div class="vb-red" style="width:${losePct}%"></div></div>
+                <span class="win-rate">${winPct}%</span>
+              </div>
+              ${origin ? `<span class="origin-badge">${origin}</span>` : ''}
+            </div>
+            <div class="principle-details">
+              <div class="pd-grid">
+                <div class="pd-item"><label>Validated</label><span>${val}</span></div>
+                <div class="pd-item"><label>Invalidated</label><span>${inv}</span></div>
+                <div class="pd-item"><label>Weight</label><span>${(weight * 100).toFixed(1)}%</span></div>
+                <div class="pd-item"><label>Last applied</label><span>${p.last_applied ? relTime(p.last_applied) : 'Never'}</span></div>
+                <div class="pd-item"><label>Created</label><span>${p.created_at ? relTime(p.created_at) : '—'}</span></div>
+                <div class="pd-item"><label>Active</label><span>${p.active !== false ? 'Yes' : 'No'}</span></div>
+              </div>
+              ${atRisk ? '<div class="pd-warning">⚠️ At risk — 2× more losses than wins</div>' : ''}
+            </div>
+          </div>`;
+        }).join('');
+      }
+
+      // Pattern discoveries
+      const discEl = $('#principles-discoveries');
+      if (discoveries.length) {
+        discEl.innerHTML = `<div class="discovery-box">
+          <h3>🔍 Discovered Patterns</h3>
+          ${discoveries.map(d => `<div class="discovery-item">
+            <span class="di-text">${d.description}</span>
+            <span class="di-evidence">${d.sample_size} trades · ${fmtPct((d.win_rate || 0) * 100)} win rate</span>
+            ${d.suggested_category ? `<span class="category-badge cat-${d.suggested_category}">${d.suggested_category}</span>` : ''}
+            <button class="di-add" onclick="event.stopPropagation(); addDiscovery('${(d.description || '').replace(/'/g, "\\'")}', '${d.suggested_category || d.pattern_type || ''}')">+ Add as Principle</button>
+          </div>`).join('')}
         </div>`;
-      }).join('');
+      } else {
+        discEl.innerHTML = '';
+      }
     } catch (e) {
       $('#principles-list').innerHTML = errorHTML('Failed to load principles', loadPrinciples);
     }
   }
+
+  window.addDiscovery = async function(text, category) {
+    try {
+      await fetch('/api/fund/principles', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ text, category, origin: 'pattern_discovery' })
+      });
+      loadPrinciples();
+    } catch (e) { console.error('Failed to add principle:', e); }
+  };
 
   // ── 14b. What-If ──
   async function loadWhatIf() {

@@ -415,25 +415,80 @@ async def get_congress_trades_summary(
         )
 
 
-@router.get("/principles", response_model=list[Principle])
+class PrinciplesSummary(BaseModel):
+    """Summary statistics for the principles engine.
+
+    Attributes:
+        total_active: Number of active principles.
+        validation_rate: Overall validation rate (0-1).
+        total_validated: Total validations across all principles.
+        total_invalidated: Total invalidations across all principles.
+        last_check: Timestamp of last validation check.
+    """
+
+    total_active: int = Field(..., description="Active principles count")
+    validation_rate: float = Field(..., description="Overall validation rate (0-1)")
+    total_validated: int = Field(..., description="Total validated count")
+    total_invalidated: int = Field(..., description="Total invalidated count")
+    last_check: str | None = Field(None, description="Last check timestamp")
+
+
+class DiscoveredPattern(BaseModel):
+    """A discovered pattern from trade analysis.
+
+    Attributes:
+        pattern_type: Type of pattern.
+        description: Human-readable description.
+        win_rate: Win rate of the pattern.
+        sample_size: Number of trades supporting the pattern.
+        suggested_category: Suggested principle category.
+    """
+
+    pattern_type: str = Field(..., description="Pattern type")
+    description: str = Field(..., description="Pattern description")
+    win_rate: float = Field(..., description="Win rate")
+    sample_size: int = Field(..., description="Sample size")
+    suggested_category: str = Field("", description="Suggested category")
+
+
+class PrinciplesResponse(BaseModel):
+    """Full principles engine response with summary and discoveries.
+
+    Attributes:
+        principles: List of active principles.
+        summary: Aggregated summary statistics.
+        discoveries: Discovered patterns pending review.
+    """
+
+    principles: list[Principle] = Field(..., description="Principles list")
+    summary: PrinciplesSummary = Field(..., description="Summary statistics")
+    discoveries: list[DiscoveredPattern] = Field(..., description="Discovered patterns")
+
+
+@router.get("/principles", response_model=PrinciplesResponse)
 async def get_principles(
     active_only: bool = Query(True, description="Show only active principles"),
     engines: Any = Depends(get_engines),
     user: dict = Depends(get_current_user),
-) -> list[Principle]:
-    """Get investment principles with validation statistics.
+) -> PrinciplesResponse:
+    """Get investment principles with validation statistics, summary, and discoveries.
 
     Returns the active learning principles used by the signal engine
-    for confidence scoring and decision making.
+    for confidence scoring and decision making, along with summary stats
+    and any discovered patterns pending review.
 
     Args:
         active_only: If True, only return active principles.
         engines: Engine container with principles engine.
 
     Returns:
-        List of Principle models with validation stats.
+        PrinciplesResponse with principles, summary, and discoveries.
     """
     try:
+        from engine.principles import PrinciplesEngine
+
+        pe = PrinciplesEngine(engines.db)
+
         # Get principles from database
         where_clause = "WHERE active = 1" if active_only else ""
 
@@ -444,30 +499,21 @@ async def get_principles(
         """)
 
         result = []
-        for principle in principles:
-            # Calculate validation rate
-            total_applications = principle["validated_count"] + principle["invalidated_count"]
-            validation_rate = (
-                (principle["validated_count"] / total_applications * 100)
-                if total_applications > 0
-                else 0.0
-            )
+        total_validated = 0
+        total_invalidated = 0
+        last_applied_dates = []
 
-            # Get recent applications (mock data - would track in separate table)
-            recent_applications = [
-                {
-                    "signal_id": 123,
-                    "symbol": "NVDA",
-                    "applied_at": "2026-02-07T14:30:00Z",
-                    "outcome": "validated",
-                },
-                {
-                    "signal_id": 118,
-                    "symbol": "AAPL",
-                    "applied_at": "2026-02-06T16:15:00Z",
-                    "outcome": "pending",
-                },
-            ]
+        for principle in principles:
+            v = principle["validated_count"]
+            iv = principle["invalidated_count"]
+            total_validated += v
+            total_invalidated += iv
+            if principle["last_applied"]:
+                last_applied_dates.append(principle["last_applied"])
+
+            # Calculate validation rate
+            total_applications = v + iv
+            validation_rate = (v / total_applications * 100) if total_applications > 0 else 0.0
 
             result.append(
                 Principle(
@@ -475,24 +521,102 @@ async def get_principles(
                     text=principle["text"],
                     category=principle["category"],
                     origin=principle["origin"],
-                    validated_count=principle["validated_count"],
-                    invalidated_count=principle["invalidated_count"],
+                    validated_count=v,
+                    invalidated_count=iv,
                     weight=principle["weight"],
                     validation_rate=validation_rate,
                     last_applied=principle["last_applied"],
-                    recent_applications=recent_applications,
+                    recent_applications=[],
                     active=bool(principle["active"]),
                     created_at=principle["created_at"],
                 )
             )
 
-        return result
+        # Build summary
+        total_checks = total_validated + total_invalidated
+        summary = PrinciplesSummary(
+            total_active=len(result),
+            validation_rate=(total_validated / total_checks) if total_checks > 0 else 0.0,
+            total_validated=total_validated,
+            total_invalidated=total_invalidated,
+            last_check=max(last_applied_dates) if last_applied_dates else None,
+        )
+
+        # Discover patterns
+        try:
+            raw_discoveries = pe.discover_patterns()
+            discoveries = [
+                DiscoveredPattern(
+                    pattern_type=d["pattern_type"],
+                    description=d["description"],
+                    win_rate=d["win_rate"],
+                    sample_size=d["sample_size"],
+                    suggested_category=(
+                        "process"
+                        if "source" in d["pattern_type"]
+                        else "timing" if "strategy" in d["pattern_type"] else ""
+                    ),
+                )
+                for d in raw_discoveries
+            ]
+        except Exception as e:
+            logger.warning("Failed to discover patterns: %s", e)
+            discoveries = []
+
+        return PrinciplesResponse(
+            principles=result,
+            summary=summary,
+            discoveries=discoveries,
+        )
 
     except Exception as e:
         logger.error("Failed to get principles: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get principles: {str(e)}",
+        )
+
+
+class CreatePrincipleRequest(BaseModel):
+    """Request body for creating a new principle.
+
+    Attributes:
+        text: The principle statement.
+        category: Principle category.
+        origin: How the principle was created.
+    """
+
+    text: str = Field(..., description="Principle text")
+    category: str = Field("", description="Category")
+    origin: str = Field("user_input", description="Origin")
+
+
+@router.post("/principles", status_code=status.HTTP_201_CREATED)
+async def create_principle(
+    body: CreatePrincipleRequest,
+    engines: Any = Depends(get_engines),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Create a new investment principle.
+
+    Args:
+        body: Principle text, category, and origin.
+        engines: Engine container with principles engine.
+
+    Returns:
+        Dictionary with the created principle ID.
+    """
+    try:
+        from engine.principles import PrinciplesEngine
+
+        pe = PrinciplesEngine(engines.db)
+        pid = pe.create_principle(text=body.text, category=body.category, origin=body.origin)
+        return {"id": pid, "status": "created"}
+    except Exception as e:
+        logger.error("Failed to create principle: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create principle: {str(e)}",
         )
 
 
