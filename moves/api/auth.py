@@ -191,7 +191,13 @@ def _register_google_routes(
         settings_now = get_settings()
         try:
             token = await oauth.google.authorize_access_token(request)
-            user = await oauth.google.parse_id_token(request, token)
+            # Try id_token first, fall back to userinfo endpoint
+            user = token.get("userinfo")
+            if not user:
+                try:
+                    user = await oauth.google.parse_id_token(request, token)
+                except (KeyError, Exception):
+                    user = await oauth.google.userinfo(token=token)
             email = user.get("email")
 
             if not email:
