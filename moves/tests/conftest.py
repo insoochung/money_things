@@ -71,7 +71,10 @@ def _ensure_user_id_columns(database: Database) -> None:
     ]
     for table in tables_needing_user_id:
         try:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER DEFAULT 1 REFERENCES users(id)")
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN user_id"
+                " INTEGER DEFAULT 1 REFERENCES users(id)"
+            )
         except Exception:
             pass  # Column already exists
 
@@ -119,11 +122,13 @@ def seeded_db(db: Database) -> Database:
     # Principles
     db.execute(
         """INSERT INTO principles (text, category, origin, validated_count, weight, user_id)
-           VALUES ('Domain expertise creates durable edge', 'domain', 'journal_import', 2, 0.05, 1)"""
+           VALUES ('Domain expertise creates durable edge',
+           'domain', 'journal_import', 2, 0.05, 1)"""
     )
     db.execute(
         """INSERT INTO principles (text, category, origin, validated_count, weight, user_id)
-           VALUES ('Insider experience is high-signal', 'conviction', 'journal_import', 0, 0.05, 1)"""
+           VALUES ('Insider experience is high-signal',
+           'conviction', 'journal_import', 0, 0.05, 1)"""
     )
     db.connect().commit()
 
