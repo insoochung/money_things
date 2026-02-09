@@ -218,14 +218,16 @@ def _seed_trades(db: Database) -> None:
         (None, "AMD", "BUY", 20, 170.10, 3402.00, 0, "mock", None),
         (None, "NVDA", "SELL", 5, 150.20, 751.00, 0, "mock", 58.50),
     ]
+    account = db.fetchone("SELECT id FROM accounts LIMIT 1")
+    account_id = account["id"] if account else 1
     for i, t in enumerate(trades):
         ts = (now - timedelta(days=len(trades) - i, hours=10)).isoformat()
         db.execute(
             """INSERT INTO trades
                (signal_id, symbol, action, shares, price,
-                total_value, fees, broker, realized_pnl, timestamp)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (*t, ts),
+                total_value, fees, broker, realized_pnl, timestamp, account_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (*t, ts, account_id),
         )
     db.connect().commit()
     print("  ✓ trades")

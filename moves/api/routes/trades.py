@@ -65,7 +65,7 @@ class Trade(BaseModel):
     total_value: float = Field(..., description="Total trade value")
     fees: float = Field(..., description="Trading fees")
     broker: str = Field(..., description="Broker used")
-    account_id: int = Field(..., description="Account ID")
+    account_id: int | None = Field(None, description="Account ID")
     realized_pnl: float | None = Field(None, description="Realized P/L")
     timestamp: str = Field(..., description="Execution timestamp")
     thesis_id: int | None = Field(None, description="Associated thesis ID")

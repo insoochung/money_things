@@ -31,27 +31,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-class PerformanceMetrics(BaseModel):
-    """Portfolio performance metrics response model.
+class NavPoint(BaseModel):
+    """Single NAV data point for time series."""
 
-    Attributes:
-        total_return_pct: Total return since inception (%).
-        annualized_return_pct: Annualized return (%).
-        ytd_return_pct: Year-to-date return (%).
-        mtd_return_pct: Month-to-date return (%).
-        wtd_return_pct: Week-to-date return (%).
-        daily_return_pct: Daily return (%).
-        sharpe_ratio: Sharpe ratio (risk-free rate 4.5%).
-        sortino_ratio: Sortino ratio (downside deviation).
-        max_drawdown_pct: Maximum drawdown from peak (%).
-        volatility_pct: Annualized volatility (%).
-        var_95_pct: 95% Value at Risk (%).
-        win_rate_pct: Percentage of profitable trading days.
-        best_day_pct: Best daily return (%).
-        worst_day_pct: Worst daily return (%).
-        calmar_ratio: Calmar ratio (annual return / max drawdown).
-        information_ratio: Information ratio vs SPY.
-    """
+    date: str = Field(..., description="Date (YYYY-MM-DD)")
+    value: float = Field(..., description="NAV value")
+
+
+class PerformanceMetrics(BaseModel):
+    """Portfolio performance metrics response model."""
 
     total_return_pct: float = Field(..., description="Total return since inception (%)")
     annualized_return_pct: float = Field(..., description="Annualized return (%)")
@@ -69,6 +57,7 @@ class PerformanceMetrics(BaseModel):
     worst_day_pct: float = Field(..., description="Worst daily return (%)")
     calmar_ratio: float = Field(..., description="Calmar ratio")
     information_ratio: float = Field(..., description="Information ratio vs SPY")
+    nav_series: list[NavPoint] = Field(default_factory=list, description="NAV time series")
 
 
 class PerformanceTimeSeries(BaseModel):
@@ -123,20 +112,15 @@ class BenchmarkComparison(BaseModel):
     benchmark_values: list[float] = Field(..., description="Benchmark cumulative returns")
 
 
-class DrawdownAnalysis(BaseModel):
-    """Drawdown analysis response model.
+class DrawdownPoint(BaseModel):
+    """Single drawdown data point."""
 
-    Attributes:
-        current_drawdown_pct: Current drawdown from peak (%).
-        max_drawdown_pct: Maximum historical drawdown (%).
-        max_drawdown_start: Start date of max drawdown period.
-        max_drawdown_end: End date of max drawdown period.
-        max_drawdown_duration: Duration of max drawdown in days.
-        days_underwater: Current days underwater.
-        recovery_factor: Recovery factor (time to recover / drawdown duration).
-        drawdown_events: List of significant drawdown periods.
-        underwater_periods: List of underwater periods.
-    """
+    date: str = Field(..., description="Date")
+    value: float = Field(..., description="Drawdown percentage (negative)")
+
+
+class DrawdownAnalysis(BaseModel):
+    """Drawdown analysis response model."""
 
     current_drawdown_pct: float = Field(..., description="Current drawdown (%)")
     max_drawdown_pct: float = Field(..., description="Maximum drawdown (%)")
@@ -147,6 +131,7 @@ class DrawdownAnalysis(BaseModel):
     recovery_factor: float | None = Field(None, description="Recovery factor")
     drawdown_events: list[dict] = Field(..., description="Significant drawdown periods")
     underwater_periods: list[dict] = Field(..., description="Underwater periods")
+    series: list[DrawdownPoint] = Field(default_factory=list, description="Drawdown time series")
 
 
 @router.get("/performance", response_model=PerformanceMetrics)
@@ -281,6 +266,12 @@ async def get_performance_metrics(
         # Information ratio (placeholder - would need benchmark data)
         information_ratio = 0.0  # TODO: Calculate vs SPY
 
+        # Build NAV time series for chart
+        nav_series = [
+            NavPoint(date=pv["date"], value=pv["total_value"])
+            for pv in portfolio_values
+        ]
+
         return PerformanceMetrics(
             total_return_pct=total_return_pct,
             annualized_return_pct=annualized_return_pct,
@@ -298,6 +289,7 @@ async def get_performance_metrics(
             worst_day_pct=worst_day_pct,
             calmar_ratio=calmar_ratio,
             information_ratio=information_ratio,
+            nav_series=nav_series,
         )
 
     except HTTPException:
@@ -404,89 +396,72 @@ async def get_drawdown_analysis(
         DrawdownAnalysis model with drawdown statistics.
     """
     try:
-        # Get drawdown events from database
-        drawdown_events = engines.db.fetchall("""
-            SELECT * FROM drawdown_events
-            ORDER BY peak_date DESC
-            LIMIT 10
+        # Get portfolio value history for drawdown calculation
+        portfolio_values = engines.db.fetchall("""
+            SELECT date, total_value FROM portfolio_value
+            ORDER BY date
         """)
 
-        # Calculate current drawdown
-        latest_portfolio = engines.db.fetchone("""
-            SELECT total_value FROM portfolio_value
-            ORDER BY date DESC
-            LIMIT 1
-        """)
-
-        peak_portfolio = engines.db.fetchone("""
-            SELECT MAX(total_value) as peak_value FROM portfolio_value
-        """)
-
-        current_value = latest_portfolio["total_value"] if latest_portfolio else 0.0
-        peak_value = peak_portfolio["peak_value"] if peak_portfolio else current_value
-
-        current_drawdown_pct = (
-            ((peak_value - current_value) / peak_value * 100) if peak_value > 0 else 0.0
-        )
-
-        # Find maximum drawdown
-        max_drawdown_event = (
-            max(drawdown_events, key=lambda x: x["drawdown_pct"]) if drawdown_events else None
-        )
-        max_drawdown_pct = max_drawdown_event["drawdown_pct"] if max_drawdown_event else 0.0
-
-        # Calculate days underwater
-        days_underwater = 0
-        if current_drawdown_pct > 0:
-            # Count days since peak
-            peak_date_result = engines.db.fetchone("""
-                SELECT date FROM portfolio_value
-                WHERE total_value = (SELECT MAX(total_value) FROM portfolio_value)
-                ORDER BY date DESC
-                LIMIT 1
-            """)
-
-            if peak_date_result:
-                from datetime import date, datetime
-
-                try:
-                    peak_date = datetime.strptime(peak_date_result["date"], "%Y-%m-%d").date()
-                    today = date.today()
-                    days_underwater = (today - peak_date).days
-                except Exception as e:
-                    logger.warning("Failed to calculate days underwater: %s", e)
-                    days_underwater = 0
-
-        # Format drawdown events
-        formatted_events = []
-        for event in drawdown_events:
-            formatted_events.append(
-                {
-                    "start_date": event["peak_date"],
-                    "end_date": event["recovery_date"] or "Ongoing",
-                    "drawdown_pct": event["drawdown_pct"],
-                    "duration_days": event["days_underwater"] or 0,
-                }
+        if not portfolio_values:
+            return DrawdownAnalysis(
+                current_drawdown_pct=0.0,
+                max_drawdown_pct=0.0,
+                days_underwater=0,
+                drawdown_events=[],
+                underwater_periods=[],
+                series=[],
             )
 
-        # Underwater periods (simplified - same as drawdown events for now)
-        underwater_periods = formatted_events
+        # Compute drawdown series from portfolio values
+        peak = portfolio_values[0]["total_value"]
+        max_dd = 0.0
+        max_dd_start = None
+        dd_series = []
+        current_dd_start = None
 
-        # Recovery factor (placeholder)
-        recovery_factor = 1.2  # Placeholder
+        for pv in portfolio_values:
+            val = pv["total_value"]
+            if val > peak:
+                peak = val
+                current_dd_start = None
+            dd_pct = -((peak - val) / peak * 100) if peak > 0 else 0.0
+            dd_series.append(DrawdownPoint(date=pv["date"], value=dd_pct))
+            if abs(dd_pct) > max_dd:
+                max_dd = abs(dd_pct)
+                max_dd_start = current_dd_start or pv["date"]
+            if dd_pct < 0 and current_dd_start is None:
+                current_dd_start = pv["date"]
+
+        current_drawdown_pct = abs(dd_series[-1].value) if dd_series else 0.0
+
+        # Days underwater
+        days_underwater = 0
+        if current_drawdown_pct > 0.01:
+            from datetime import date as date_cls
+            from datetime import datetime
+
+            try:
+                peak_date = None
+                peak_val = 0
+                for pv in portfolio_values:
+                    if pv["total_value"] >= peak_val:
+                        peak_val = pv["total_value"]
+                        peak_date = pv["date"]
+                if peak_date:
+                    pd = datetime.strptime(peak_date, "%Y-%m-%d").date()
+                    days_underwater = (date_cls.today() - pd).days
+            except Exception:
+                pass
 
         return DrawdownAnalysis(
             current_drawdown_pct=current_drawdown_pct,
-            max_drawdown_pct=max_drawdown_pct,
-            max_drawdown_start=max_drawdown_event["peak_date"] if max_drawdown_event else None,
-            max_drawdown_end=max_drawdown_event["recovery_date"] if max_drawdown_event else None,
-            max_drawdown_duration=max_drawdown_event["days_underwater"]
-            if max_drawdown_event
-            else None,
+            max_drawdown_pct=max_dd,
+            max_drawdown_start=max_dd_start,
             days_underwater=days_underwater,
-            recovery_factor=recovery_factor,
-            drawdown_events=formatted_events,
-            underwater_periods=underwater_periods,
+            recovery_factor=None,
+            drawdown_events=[],
+            underwater_periods=[],
+            series=dd_series,
         )
 
     except Exception as e:

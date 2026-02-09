@@ -89,13 +89,17 @@
   async function loadSummary() {
     try {
       const d = await api('/api/fund/status');
+      const returnPct = d.total_return_pct ?? d.return_pct;
+      const unrealized = d.unrealized_pnl ?? d.unrealized;
+      const realized = d.realized_pnl ?? d.realized;
+      const sharpe = d.sharpe_ratio ?? d.sharpe ?? 0;
       const items = [
         { label: 'NAV', val: fmtCur(d.nav), sub: 'Net Asset Value', c: '' },
-        { label: 'Return', val: fmtPct(d.return_pct), sub: 'Total return', c: cls(d.return_pct) },
-        { label: 'Unrealized P/L', val: fmtCur(d.unrealized), sub: 'Open positions', c: cls(d.unrealized) },
-        { label: 'Realized P/L', val: fmtCur(d.realized), sub: 'Closed trades', c: cls(d.realized) },
+        { label: 'Return', val: fmtPct(returnPct), sub: 'Total return', c: cls(returnPct) },
+        { label: 'Unrealized P/L', val: fmtCur(unrealized), sub: 'Open positions', c: cls(unrealized) },
+        { label: 'Realized P/L', val: fmtCur(realized), sub: 'Closed trades', c: cls(realized) },
         { label: 'Cash', val: fmtCur(d.cash), sub: 'Available', c: '' },
-        { label: 'Sharpe', val: fmt(d.sharpe), sub: 'Risk-adj return', c: d.sharpe >= 1 ? 'positive' : d.sharpe < 0 ? 'negative' : '' },
+        { label: 'Sharpe', val: fmt(sharpe), sub: 'Risk-adj return', c: sharpe >= 1 ? 'positive' : sharpe < 0 ? 'negative' : '' },
       ];
       const mode = d.mode || 'mock';
       const badge = $('#mode-badge');
@@ -184,9 +188,9 @@
   async function loadExposure() {
     try {
       const d = await api('/api/fund/exposure');
-      const long = d.long_pct ?? d.long ?? 0;
-      const short = Math.abs(d.short_pct ?? d.short ?? 0);
-      const cash = d.cash_pct ?? d.cash ?? (100 - long - short);
+      const long = d.long_exposure ?? d.long_pct ?? d.long ?? 0;
+      const short = Math.abs(d.short_exposure ?? d.short_pct ?? d.short ?? 0);
+      const cash = d.cash_pct ?? d.cash ?? Math.max(0, 100 - long - short);
       const net = d.net_exposure ?? (long - short);
 
       const container = $('#exposure-bar-container');
@@ -270,13 +274,14 @@
       // simple squarified-ish layout: single row
       let x = 0;
       container.innerHTML = items.map(p => {
+        const ticker = p.ticker || p.symbol || '?';
         const mv = Math.abs(p.market_value || p.value || 1);
         const w = (mv / total) * W;
-        const pnl = p.pnl_pct ?? p.pl_pct ?? 0;
+        const pnl = p.pnl_pct ?? p.pl_pct ?? p.unrealized_pnl_pct ?? 0;
         const bg = pnl >= 0 ? `rgba(68,131,97,${Math.min(0.9, 0.3 + Math.abs(pnl) / 30)})` : `rgba(224,62,62,${Math.min(0.9, 0.3 + Math.abs(pnl) / 30)})`;
         const left = x;
         x += w;
-        return `<div class="treemap-rect" style="left:${left}px;top:0;width:${w}px;height:${H}px;background:${bg}" title="${p.ticker}: ${fmtCur(p.market_value || p.value)} (${fmtPct(pnl)})"><span class="tm-ticker">${p.ticker}</span><span class="tm-pct">${fmtPct(pnl)}</span></div>`;
+        return `<div class="treemap-rect" style="left:${left}px;top:0;width:${w}px;height:${H}px;background:${bg}" title="${ticker}: ${fmtCur(p.market_value || p.value)} (${fmtPct(pnl)})"><span class="tm-ticker">${ticker}</span><span class="tm-pct">${fmtPct(pnl)}</span></div>`;
       }).join('');
     } catch (e) {
       $('#treemap').innerHTML = errorHTML('Failed to load heatmap', loadTreemap);
@@ -304,18 +309,20 @@
     });
 
     $('#positions-body').innerHTML = arr.map((p, i) => {
-      const cur = state.prices[p.ticker] ?? p.current ?? p.price;
-      const value = (cur || 0) * (p.shares || 0);
-      const pnl = p.pnl ?? (value - (p.entry || 0) * (p.shares || 0));
-      const pnlPct = p.pnl_pct ?? (p.entry ? ((cur - p.entry) / p.entry) * 100 : 0);
+      const ticker = p.ticker || p.symbol;
+      const entry = p.avg_cost ?? p.entry ?? 0;
+      const cur = state.prices[ticker] ?? p.current_price ?? p.current ?? p.price ?? entry;
+      const value = p.market_value ?? ((cur || 0) * (p.shares || 0));
+      const pnl = p.unrealized_pnl ?? p.pnl ?? (value - entry * (p.shares || 0));
+      const pnlPct = p.unrealized_pnl_pct ?? p.pnl_pct ?? (entry ? ((cur - entry) / entry) * 100 : 0);
       const rangeBar = buildRangeBar(p.stop, cur, p.target);
       const review = p.review_days != null ? `${p.review_days}d` : '—';
       return `<tr class="pos-row" data-idx="${i}" style="cursor:pointer">
-        <td><strong>${p.ticker}</strong></td>
+        <td><strong>${ticker}</strong></td>
         <td><span class="badge ${p.side === 'short' ? 'badge-red' : 'badge-green'}">${p.side || 'long'}</span></td>
         <td>${p.shares}</td>
-        <td>${fmtCur(p.entry)}</td>
-        <td id="price-${p.ticker}">${fmtCur(cur)}</td>
+        <td>${fmtCur(entry)}</td>
+        <td id="price-${ticker}">${fmtCur(cur)}</td>
         <td class="hide-tablet">${fmtCur(value)}</td>
         <td class="${cls(pnl)}">${fmtCur(pnl)}</td>
         <td class="${cls(pnlPct)}">${fmtPct(pnlPct)}</td>
@@ -492,8 +499,8 @@
       state.ddData = d;
       const metrics = $('#dd-metrics');
       metrics.innerHTML = [
-        { label: 'Max Drawdown', val: fmtPct(d.max_drawdown) },
-        { label: 'Current DD', val: fmtPct(d.current_drawdown) },
+        { label: 'Max Drawdown', val: fmtPct(d.max_drawdown_pct ?? d.max_drawdown) },
+        { label: 'Current DD', val: fmtPct(d.current_drawdown_pct ?? d.current_drawdown) },
         { label: 'Days Underwater', val: d.days_underwater ?? '—' },
       ].map(m => `<div class="dd-metric"><div class="dd-val negative">${m.val}</div><div class="dd-label">${m.label}</div></div>`).join('');
       drawDDChart();
@@ -546,10 +553,10 @@
         const isBuy = (t.action || t.side || '').toLowerCase().includes('buy');
         return `<tr>
           <td><span class="badge ${isBuy ? 'badge-green' : 'badge-red'}">${(t.action || t.side || '').toUpperCase()}</span></td>
-          <td><strong>${t.ticker}</strong></td>
+          <td><strong>${t.ticker || t.symbol}</strong></td>
           <td>${t.shares}</td>
           <td>${fmtCur(t.price)}</td>
-          <td class="hide-tablet">${fmtCur(t.total ?? (t.shares * t.price))}</td>
+          <td class="hide-tablet">${fmtCur(t.total_value ?? t.total ?? (t.shares * t.price))}</td>
           <td class="${cls(t.realized_pnl)}">${fmtCur(t.realized_pnl ?? 0)}</td>
         </tr>`;
       }).join('');
@@ -645,12 +652,13 @@
       const d = await api('/api/fund/congress-trades');
       const trades = Array.isArray(d) ? d : d.trades || [];
       if (!trades.length) { $('#congress-body').innerHTML = `<tr><td colspan="6">${emptyHTML('No congress trades')}</td></tr>`; return; }
-      const myTickers = new Set(state.positions.map(p => p.ticker));
+      const myTickers = new Set(state.positions.map(p => p.ticker || p.symbol));
       $('#congress-body').innerHTML = trades.map(t => {
-        const overlap = myTickers.has(t.ticker);
+        const ticker = t.ticker || t.symbol;
+        const overlap = myTickers.has(ticker);
         return `<tr class="${overlap ? 'overlap' : ''}">
-          <td>${t.member || t.representative}</td>
-          <td><strong>${t.ticker}</strong></td>
+          <td>${t.member || t.representative || t.politician}</td>
+          <td><strong>${ticker}</strong></td>
           <td>${t.action || t.type}</td>
           <td class="hide-tablet">${t.amount || '—'}</td>
           <td>${t.date || t.filed_date || '—'}</td>
@@ -837,7 +845,6 @@
       loadMacro(),
       loadRisk(),
       loadTheses(),
-      loadSharedTheses(),
       loadExposure(),
       loadCorrelation(),
       loadTreemap(),
