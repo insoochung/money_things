@@ -195,10 +195,18 @@ async def get_performance_metrics(
             else 0.0
         )
 
-        # Period returns (placeholder calculations)
-        ytd_return_pct = 0.0  # TODO: Calculate YTD return
-        mtd_return_pct = 0.0  # TODO: Calculate MTD return
-        wtd_return_pct = 0.0  # TODO: Calculate WTD return
+        # Period returns from portfolio_value table
+        from api.benchmark import calculate_period_return, period_start_date
+
+        ytd_return_pct = calculate_period_return(
+            portfolio_values, period_start_date("ytd")
+        )
+        mtd_return_pct = calculate_period_return(
+            portfolio_values, period_start_date("mtd")
+        )
+        wtd_return_pct = calculate_period_return(
+            portfolio_values, period_start_date("wtd")
+        )
         daily_return_pct = daily_returns[-1] if daily_returns else 0.0
 
         # Risk metrics
@@ -263,8 +271,28 @@ async def get_performance_metrics(
         # Calmar ratio
         calmar_ratio = (annualized_return_pct / max_drawdown_pct) if max_drawdown_pct > 0 else 0.0
 
-        # Information ratio (placeholder - would need benchmark data)
-        information_ratio = 0.0  # TODO: Calculate vs SPY
+        # Information ratio vs SPY
+        from api.benchmark import (
+            align_series,
+            compute_benchmark_stats,
+            daily_returns as calc_daily_returns,
+            fetch_benchmark_prices,
+        )
+
+        information_ratio = 0.0
+        try:
+            first_date = portfolio_values[0]["date"]
+            last_date = portfolio_values[-1]["date"]
+            bm_data = fetch_benchmark_prices("SPY", first_date, last_date)
+            if bm_data:
+                pf_vals, bm_vals, _ = align_series(portfolio_values, bm_data)
+                if len(pf_vals) > 2:
+                    pf_rets = calc_daily_returns(pf_vals)
+                    bm_rets = calc_daily_returns(bm_vals)
+                    stats = compute_benchmark_stats(pf_rets, bm_rets)
+                    information_ratio = stats["information_ratio"]
+        except Exception as exc:
+            logger.warning("Info ratio calculation failed: %s", exc)
 
         # Build NAV time series for chart
         nav_series = [

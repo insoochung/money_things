@@ -46,6 +46,7 @@ from api.routes import (
     admin,
     fund,
     intelligence,
+    outcomes,
     performance,
     risk,
     signals,
@@ -54,7 +55,6 @@ from api.routes import (
     trades,
     users,
     watchlist,
-    outcomes,
 )
 from api.websocket import create_websocket_router
 from broker.mock import MockBroker
