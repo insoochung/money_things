@@ -1,6 +1,7 @@
 """Scheduled job implementations for the money_moves system.
 
-Jobs now iterate over all active users or accept user_id.
+Each function is a standalone job callable registered with the scheduler.
+Jobs handle their own error logging and never raise exceptions.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
     from engine.analytics import AnalyticsEngine
     from engine.congress import CongressTradesEngine
     from engine.news_validator import NewsValidator
+    from engine.signal_generator import SignalGenerator
     from engine.signals import SignalEngine
     from engine.thesis import ThesisEngine
     from engine.whatif import WhatIfEngine
@@ -148,6 +150,32 @@ def job_stale_thesis_check(thesis_engine: ThesisEngine, db: Database) -> None:
                 logger.info("stale_thesis_check: flagged thesis %d as weakening", row["id"])
             except Exception:
                 logger.exception("stale_thesis_check: failed to flag thesis %d", row["id"])
+
+
+def job_signal_scan(
+    signal_generator: SignalGenerator,
+) -> None:
+    """Scan theses and generate trading signals.
+
+    Evaluates all active theses for potential buy/sell signals based on
+    price movements, thesis status changes, and portfolio state.
+
+    Args:
+        signal_generator: SignalGenerator instance.
+    """
+    logger.info("signal_scan: starting thesis evaluation")
+    try:
+        signals = signal_generator.run_scan()
+        logger.info("signal_scan: generated %d signals", len(signals))
+        for sig in signals:
+            logger.info(
+                "signal_scan: %s %s (confidence: %.2f)",
+                sig.get("action", "?"),
+                sig.get("symbol", "?"),
+                sig.get("confidence", 0),
+            )
+    except Exception:
+        logger.exception("signal_scan: failed")
 
 
 def job_news_scan(
