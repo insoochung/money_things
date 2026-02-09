@@ -606,12 +606,20 @@
       });
 
       // Wire up narrative expand/collapse
-      $$('.signal-expand-toggle').forEach(el => {
+      $$('.signal-detail-toggle').forEach(el => {
         el.addEventListener('click', (e) => {
           e.stopPropagation();
-          const open = el.getAttribute('aria-expanded') === 'true';
-          el.setAttribute('aria-expanded', !open);
-          el.textContent = open ? 'More ▾' : 'Less ▴';
+          const wrap = el.nextElementSibling;
+          const isOpen = el.dataset.state === 'open';
+          if (isOpen) {
+            wrap.classList.remove('open');
+            el.dataset.state = 'closed';
+            el.textContent = 'More ▾';
+          } else {
+            wrap.classList.add('open');
+            el.dataset.state = 'open';
+            el.textContent = 'Less ▴';
+          }
         });
       });
     } catch (e) {
@@ -693,9 +701,8 @@
         <span>${relTime(s.created_at)}</span>
         ${s.decided_at ? `<span>Decided ${relTime(s.decided_at)}</span>` : ''}
       </div>
-      <div class="signal-expand-toggle" onclick="this.style.display='none';this.nextElementSibling.classList.add('open');this.nextElementSibling.nextElementSibling.classList.add('open')">More ▾</div>
+      <div class="signal-detail-toggle" data-state="closed">More ▾</div>
       <div class="signal-narrative-wrap"><p class="signal-narrative">${narrative}</p></div>
-      <div class="signal-collapse-toggle" onclick="this.classList.remove('open');this.previousElementSibling.classList.remove('open');this.previousElementSibling.previousElementSibling.style.display=''">Less ▴</div>
       ${isPending ? `<div class="signal-actions"><button class="approve-btn" data-id="${s.id}">✓ Approve</button><button class="reject-btn" data-id="${s.id}">✗ Reject</button></div>` : ''}
     </div>`;
   }

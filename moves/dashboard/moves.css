@@ -899,30 +899,21 @@ tr.overlap { background: rgba(47,128,237,.06); }
 }
 
 /* Progressive disclosure — signal narrative */
-.signal-expand-toggle {
+.signal-detail-toggle {
   font-size: 0.8rem;
-  color: var(--muted);
+  color: var(--blue);
   cursor: pointer;
   padding: 4px 0;
   user-select: none;
 }
-.signal-expand-toggle:hover { color: var(--text); }
-.signal-expand-toggle[aria-expanded="true"] { display: none; }
+.signal-detail-toggle:hover { opacity: 0.7; }
 .signal-narrative-wrap {
   max-height: 0;
   overflow: hidden;
-  transition: max-height 0.3s ease;
+  transition: max-height 0.3s ease, opacity 0.3s ease;
+  opacity: 0;
 }
 .signal-narrative-wrap.open {
-  max-height: 300px;
+  max-height: 400px;
+  opacity: 1;
 }
-.signal-collapse-toggle {
-  font-size: 0.8rem;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 2px 0;
-  user-select: none;
-  display: none;
-}
-.signal-collapse-toggle.open { display: block; }
-.signal-collapse-toggle:hover { color: var(--text); }
