@@ -612,16 +612,25 @@
     try {
       const rangeDays = { '1M': 30, '3M': 90, '6M': 180, '1Y': 365, 'ALL': 1825 };
       const days = rangeDays[state.perfRange] || 90;
-      const [perf, bench] = await Promise.all([
+      const [perf, bSpy, bQqq, bIwm] = await Promise.all([
         api(`/api/fund/performance?days=${days}`),
-        api(`/api/fund/benchmark?days=${days}`),
+        api(`/api/fund/benchmark?days=${days}&benchmark=SPY`).catch(() => null),
+        api(`/api/fund/benchmark?days=${days}&benchmark=QQQ`).catch(() => null),
+        api(`/api/fund/benchmark?days=${days}&benchmark=IWM`).catch(() => null),
       ]);
       state.perfData = perf;
-      state.benchData = bench;
+      state.benchData = {
+        SPY: bSpy?.benchmark_cumulative || [],
+        QQQ: bQqq?.benchmark_cumulative || [],
+        IWM: bIwm?.benchmark_cumulative || [],
+        alpha: bSpy?.alpha ?? 0,
+        beta: bSpy?.beta ?? 0,
+      };
       drawPerfChart();
       // badges
       const badges = $('#perf-badges');
-      badges.innerHTML = `<span class="badge badge-muted">α ${fmt(perf.alpha ?? bench.alpha ?? 0)}</span><span class="badge badge-muted">β ${fmt(perf.beta ?? bench.beta ?? 0)}</span>`;
+      const bd = state.benchData;
+      badges.innerHTML = `<span class="badge badge-muted">α ${fmt(perf.alpha ?? bd.alpha ?? 0)}</span><span class="badge badge-muted">β ${fmt(perf.beta ?? bd.beta ?? 0)}</span>`;
     } catch (e) {
       $('#perf-canvas').parentElement.innerHTML = errorHTML('Failed to load performance', loadPerformance);
     }
@@ -684,9 +693,11 @@
     ['spy', 'qqq', 'iwm'].forEach(sym => {
       if (!document.getElementById(`bench-${sym}`).checked) return;
       const bd = state.benchData;
-      const series = bd[sym] || bd[sym.toUpperCase()] || [];
+      const series = bd[sym.toUpperCase()] || [];
       if (!series.length) return;
-      const bVals = series.map(p => p.value ?? p);
+      // benchmark_cumulative is % returns; rebase to starting NAV
+      const startNav = vals[0];
+      const bVals = series.map(p => startNav * (1 + (p.value ?? p) / 100));
       ctx.beginPath(); ctx.strokeStyle = benchColors[sym.toUpperCase()]; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
       bVals.forEach((v, i) => { const x = plotX(i * (vals.length - 1) / (bVals.length - 1)); i === 0 ? ctx.moveTo(x, plotY(v)) : ctx.lineTo(x, plotY(v)); });
       ctx.stroke(); ctx.setLineDash([]);
