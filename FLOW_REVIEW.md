@@ -53,8 +53,8 @@ Live at **https://munnythoughts.com** with Google OAuth.
 ## Remaining Weak Links (Priority Order)
 
 ### P0 — Critical Path
-1. **Outcome feedback loop missing**: No mechanism to track whether a thesis/signal was right or wrong after the fact. Need `engine/feedback.py` that checks actual returns against thesis predictions.
-2. **Sub-agent output → DB pipeline**: The `/think` command returns a task string, but there's no code that parses the sub-agent's JSON output back and updates the thesis/conviction in the DB. Currently requires manual Munny intervention.
+1. ~~**Outcome feedback loop missing**~~: ✅ **DONE (2026-02-09)** — `engine/outcome_tracker.py` scores theses against actual returns. Calibration scoring (0-100), daily snapshots via `outcome_snapshots` table, REST API at `/api/fund/outcomes`, Telegram-formatted scorecards. 19 tests. Commit `d79a1be`.
+2. ~~**Sub-agent output → DB pipeline**~~: ✅ **DONE (previously)** — `thoughts/feedback.py` parses sub-agent JSON, saves journal/notes, queues conviction changes for approval. Tests in `thoughts/tests/test_feedback.py`.
 
 ### P1 — Important
 3. **Dashboard watchlist triggers not visible without auth bypass**: Can't verify visually. Need test or screenshot.
