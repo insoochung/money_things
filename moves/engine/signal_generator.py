@@ -290,6 +290,81 @@ class SignalGenerator:
             return True
         return False
 
+    def _collect_individual_factor_scores(
+        self,
+        symbol: str,
+        thesis: Any,
+    ) -> tuple[float, float, float, float, float, float]:
+        """Collect individual factor scores from various sources.
+
+        Args:
+            symbol: Ticker symbol.
+            thesis: Thesis model.
+
+        Returns:
+            Tuple of (conviction, watchlist, news, critic, calibration, congress) scores.
+        """
+        conviction = thesis.conviction if thesis.conviction else 0.5
+        watchlist_score = self._check_watchlist_triggers(symbol)
+        news_score = self._get_news_sentiment(symbol, thesis)
+        critic_score = self._get_critic_assessment(thesis)
+        calibration = self._get_calibration_score()
+        congress_score = self._get_congress_alignment(symbol)
+
+        return conviction, watchlist_score, news_score, critic_score, calibration, congress_score
+
+    def _apply_price_trigger_boost(
+        self,
+        conviction: float,
+        trigger: dict | None,
+    ) -> float:
+        """Apply price trigger boost to conviction score.
+
+        Args:
+            conviction: Base conviction score.
+            trigger: Price trigger dict or None.
+
+        Returns:
+            Conviction with trigger boost applied (capped at 1.0).
+        """
+        if trigger:
+            abs_move = abs(trigger.get("change_percent", 0))
+            boost = min(abs_move / 20.0, 0.15)
+            conviction = min(conviction + boost, 1.0)
+        return conviction
+
+    def _calculate_weighted_score(
+        self,
+        conviction: float,
+        watchlist_score: float,
+        news_score: float,
+        critic_score: float,
+        calibration: float,
+        congress_score: float,
+    ) -> float:
+        """Calculate final weighted score from individual factors.
+
+        Args:
+            conviction: Thesis conviction score.
+            watchlist_score: Watchlist trigger score.
+            news_score: News sentiment score.
+            critic_score: Critic assessment score.
+            calibration: Calibration score.
+            congress_score: Congress alignment score.
+
+        Returns:
+            Weighted total score (clamped to 0.0-1.0).
+        """
+        weighted = (
+            conviction * _WEIGHT_THESIS_CONVICTION
+            + watchlist_score * _WEIGHT_WATCHLIST_TRIGGER
+            + news_score * _WEIGHT_NEWS_SENTIMENT
+            + critic_score * _WEIGHT_CRITIC_ASSESSMENT
+            + calibration * _WEIGHT_CALIBRATION
+            + congress_score * _WEIGHT_CONGRESS_ALIGNMENT
+        )
+        return round(min(1.0, max(0.0, weighted)), 4)
+
     def _compute_multi_factor_score(
         self,
         symbol: str,
@@ -308,37 +383,14 @@ class SignalGenerator:
         Returns:
             MultiFactorScore with individual factor scores and total.
         """
-        # 1. Thesis conviction (0.0–1.0)
-        conviction = thesis.conviction if thesis.conviction else 0.5
+        conviction, watchlist_score, news_score, critic_score, calibration, congress_score = (
+            self._collect_individual_factor_scores(symbol, thesis)
+        )
 
-        # 2. Watchlist trigger (1.0 if hit, 0.0 if not)
-        watchlist_score = self._check_watchlist_triggers(symbol)
+        conviction = self._apply_price_trigger_boost(conviction, trigger)
 
-        # 3. News sentiment (0.0–1.0)
-        news_score = self._get_news_sentiment(symbol, thesis)
-
-        # 4. Critic assessment (0.0–1.0)
-        critic_score = self._get_critic_assessment(thesis)
-
-        # 5. Calibration / win rate (0.0–1.0)
-        calibration = self._get_calibration_score()
-
-        # 6. Congress alignment (0.0–1.0)
-        congress_score = self._get_congress_alignment(symbol)
-
-        # Price trigger boost (additive on conviction, up to +0.15)
-        if trigger:
-            abs_move = abs(trigger.get("change_percent", 0))
-            boost = min(abs_move / 20.0, 0.15)
-            conviction = min(conviction + boost, 1.0)
-
-        weighted = (
-            conviction * _WEIGHT_THESIS_CONVICTION
-            + watchlist_score * _WEIGHT_WATCHLIST_TRIGGER
-            + news_score * _WEIGHT_NEWS_SENTIMENT
-            + critic_score * _WEIGHT_CRITIC_ASSESSMENT
-            + calibration * _WEIGHT_CALIBRATION
-            + congress_score * _WEIGHT_CONGRESS_ALIGNMENT
+        weighted_total = self._calculate_weighted_score(
+            conviction, watchlist_score, news_score, critic_score, calibration, congress_score
         )
 
         return MultiFactorScore(
@@ -348,7 +400,7 @@ class SignalGenerator:
             critic_assessment=critic_score,
             calibration=calibration,
             congress_alignment=congress_score,
-            weighted_total=round(min(1.0, max(0.0, weighted)), 4),
+            weighted_total=weighted_total,
         )
 
     def _check_watchlist_triggers(self, symbol: str) -> float:
@@ -615,6 +667,114 @@ class SignalGenerator:
 
         return None
 
+    def _score_and_validate_confidence(
+        self,
+        raw_confidence: float,
+        thesis_status: str,
+        action: str,
+        symbol: str,
+    ) -> float | None:
+        """Score confidence and validate it meets minimum threshold.
+
+        Args:
+            raw_confidence: Multi-factor confidence 0.0–1.0.
+            thesis_status: Thesis status value.
+            action: Signal action for logging.
+            symbol: Symbol for logging.
+
+        Returns:
+            Scored confidence if valid, None if below threshold.
+        """
+        confidence = self.signal_engine.score_confidence(
+            raw_confidence=raw_confidence,
+            thesis_status=thesis_status,
+            source_type=SignalSource.THESIS_UPDATE.value,
+        )
+
+        if confidence < 0.3:
+            logger.debug(
+                "signal_scan: skipping %s %s — confidence %.2f too low",
+                action, symbol, confidence,
+            )
+            return None
+
+        return confidence
+
+    def _create_signal_object(
+        self,
+        action: str,
+        symbol: str,
+        thesis: Any,
+        confidence: float,
+        reasoning: str,
+        size_pct: float,
+    ) -> Signal:
+        """Create Signal object with all required fields.
+
+        Args:
+            action: "BUY" or "SELL".
+            symbol: Ticker symbol.
+            thesis: Thesis model.
+            confidence: Scored confidence.
+            reasoning: Human-readable reasoning string.
+            size_pct: Position size as percentage of NAV.
+
+        Returns:
+            Configured Signal object.
+        """
+        signal_action = (
+            SignalAction.BUY if action == "BUY" else SignalAction.SELL
+        )
+
+        return Signal(
+            action=signal_action,
+            symbol=symbol,
+            thesis_id=thesis.id,
+            confidence=round(confidence, 4),
+            source=SignalSource.THESIS_UPDATE,
+            horizon=thesis.horizon or "",
+            reasoning=reasoning,
+            size_pct=size_pct,
+            status=SignalStatus.PENDING,
+        )
+
+    def _build_signal_result(
+        self,
+        created_signal: Signal,
+        action: str,
+        symbol: str,
+        confidence: float,
+        size_pct: float,
+        reasoning: str,
+    ) -> dict:
+        """Build result dictionary for generated signal.
+
+        Args:
+            created_signal: Persisted signal object.
+            action: Signal action.
+            symbol: Ticker symbol.
+            confidence: Final confidence score.
+            size_pct: Position size percentage.
+            reasoning: Signal reasoning.
+
+        Returns:
+            Dict with signal details.
+        """
+        logger.info(
+            "signal_scan: created %s signal for %s "
+            "(confidence=%.2f, thesis=%d)",
+            action, symbol, confidence, created_signal.thesis_id,
+        )
+        return {
+            "signal_id": created_signal.id,
+            "action": action,
+            "symbol": symbol,
+            "confidence": confidence,
+            "size_pct": size_pct,
+            "thesis_id": created_signal.thesis_id,
+            "reasoning": reasoning,
+        }
+
     def _generate_signal(
         self,
         action: str,
@@ -635,38 +795,17 @@ class SignalGenerator:
         Returns:
             Dict describing the created signal, or None if blocked.
         """
-        confidence = self.signal_engine.score_confidence(
-            raw_confidence=raw_confidence,
-            thesis_status=thesis.status.value,
-            source_type=SignalSource.THESIS_UPDATE.value,
+        confidence = self._score_and_validate_confidence(
+            raw_confidence, thesis.status.value, action, symbol
         )
-
-        if confidence < 0.3:
-            logger.debug(
-                "signal_scan: skipping %s %s — confidence %.2f too low",
-                action, symbol, confidence,
-            )
+        if confidence is None:
             return None
 
         nav = self.risk_manager._get_nav()
-        size_pct = self._compute_position_size(
-            symbol, confidence, nav,
-        )
+        size_pct = self._compute_position_size(symbol, confidence, nav)
 
-        signal_action = (
-            SignalAction.BUY if action == "BUY" else SignalAction.SELL
-        )
-
-        signal = Signal(
-            action=signal_action,
-            symbol=symbol,
-            thesis_id=thesis.id,
-            confidence=round(confidence, 4),
-            source=SignalSource.THESIS_UPDATE,
-            horizon=thesis.horizon or "",
-            reasoning=reasoning,
-            size_pct=size_pct,
-            status=SignalStatus.PENDING,
+        signal = self._create_signal_object(
+            action, symbol, thesis, confidence, reasoning, size_pct
         )
 
         risk_result = self.risk_manager.pre_trade_check(signal)
@@ -678,20 +817,9 @@ class SignalGenerator:
             return None
 
         created = self.signal_engine.create_signal(signal)
-        logger.info(
-            "signal_scan: created %s signal for %s "
-            "(confidence=%.2f, thesis=%d)",
-            action, symbol, confidence, thesis.id,
+        return self._build_signal_result(
+            created, action, symbol, confidence, size_pct, reasoning
         )
-        return {
-            "signal_id": created.id,
-            "action": action,
-            "symbol": symbol,
-            "confidence": confidence,
-            "size_pct": size_pct,
-            "thesis_id": thesis.id,
-            "reasoning": reasoning,
-        }
 
     def _compute_position_size(
         self, symbol: str, confidence: float, nav: float,
