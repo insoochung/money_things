@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from api.auth import get_current_user
-from api.deps import get_engines
+from api.deps import EngineContainer, get_engines
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ async def list_trades(
     thesis_id: int | None = Query(None, description="Filter by thesis ID"),
     limit: int = Query(50, ge=1, le=500, description="Maximum number of trades to return"),
     offset: int = Query(0, ge=0, description="Number of trades to skip"),
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> list[Trade]:
     """List executed trades with optional filtering.
@@ -224,7 +224,7 @@ async def get_trades_summary(
     symbol: str | None = Query(None, description="Filter by symbol"),
     thesis_id: int | None = Query(None, description="Filter by thesis ID"),
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> TradesSummary:
     """Get summary statistics for trade performance.
@@ -484,7 +484,7 @@ def _update_portfolio_value(db: Any) -> None:
 @router.post("/trades/manual", response_model=ManualTradeResponse)
 async def create_manual_trade(
     req: ManualTradeRequest,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> ManualTradeResponse:
     """Log a manually-executed trade and update positions.
@@ -571,7 +571,7 @@ async def create_manual_trade(
 @router.delete("/trades/{trade_id}")
 async def delete_trade(
     trade_id: int,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> dict[str, str]:
     """Undo a manual trade by reversing its position effect.

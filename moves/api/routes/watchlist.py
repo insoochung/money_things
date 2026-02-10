@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from api.auth import get_current_user
-from api.deps import get_engines
+from api.deps import EngineContainer, get_engines
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +161,7 @@ def _row_to_response(row: dict) -> WatchlistTriggerResponse:
 )
 async def list_triggers(
     active_only: bool = True,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> list[WatchlistTriggerResponse]:
     """List watchlist triggers, optionally filtered to active only.
@@ -191,7 +191,7 @@ async def list_triggers(
 )
 async def create_trigger(
     body: WatchlistTriggerCreate,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> WatchlistTriggerResponse:
     """Create a new watchlist trigger.
@@ -255,7 +255,7 @@ async def create_trigger(
 async def update_trigger(
     trigger_id: int,
     body: WatchlistTriggerUpdate,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> WatchlistTriggerResponse:
     """Update a watchlist trigger by ID.
@@ -326,7 +326,7 @@ async def update_trigger(
 @router.delete("/watchlist/{trigger_id}")
 async def delete_trigger(
     trigger_id: int,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> dict:
     """Delete a watchlist trigger by ID.

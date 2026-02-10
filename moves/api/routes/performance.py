@@ -18,13 +18,12 @@ Dependencies:
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from api.auth import get_current_user
-from api.deps import get_engines
+from api.deps import EngineContainer, get_engines
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +136,7 @@ class DrawdownAnalysis(BaseModel):
 @router.get("/performance", response_model=PerformanceMetrics)
 async def get_performance_metrics(
     days: int = Query(365, ge=30, le=1825, description="Number of days to analyze"),
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> PerformanceMetrics:
     """Get portfolio performance metrics and statistics.
@@ -336,7 +335,7 @@ async def get_performance_metrics(
 async def get_benchmark_comparison(
     benchmark: str = Query("SPY", pattern="^(SPY|QQQ|IWM)$", description="Benchmark symbol"),
     days: int = Query(365, ge=30, le=1825, description="Number of days to compare"),
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> BenchmarkComparison:
     """Compare portfolio performance against benchmark.
@@ -431,7 +430,7 @@ async def get_benchmark_comparison(
 
 @router.get("/drawdown", response_model=DrawdownAnalysis)
 async def get_drawdown_analysis(
-    engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+    engines: EngineContainer = Depends(get_engines), user: dict = Depends(get_current_user)
 ) -> DrawdownAnalysis:
     """Get detailed drawdown analysis and underwater periods.
 

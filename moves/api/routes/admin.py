@@ -20,13 +20,12 @@ Dependencies:
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from api.auth import get_current_user
-from api.deps import get_engines
+from api.deps import EngineContainer, get_engines
 from config.settings import Mode
 
 logger = logging.getLogger(__name__)
@@ -123,7 +122,7 @@ class AuditLogEntry(BaseModel):
 @router.post("/kill-switch", response_model=KillSwitchResponse)
 async def toggle_kill_switch(
     request: KillSwitchRequest,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> KillSwitchResponse:
     """Toggle the system kill switch on or off.
@@ -227,7 +226,7 @@ async def toggle_kill_switch(
 
 @router.get("/kill-switch/status", response_model=KillSwitchResponse)
 async def get_kill_switch_status(
-    engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+    engines: EngineContainer = Depends(get_engines), user: dict = Depends(get_current_user)
 ) -> KillSwitchResponse:
     """Get current kill switch status.
 
@@ -274,7 +273,7 @@ async def get_kill_switch_status(
 async def switch_mode(
     mode: Mode,
     switch_request: ModeSwitch,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> ModeSwitchResponse:
     """Switch between mock and live trading modes.
@@ -393,7 +392,7 @@ async def get_audit_log(
     entity_type: str | None = Query(None, description="Filter by entity type"),
     actor: str | None = Query(None, description="Filter by actor"),
     days: int = Query(7, ge=1, le=90, description="Days to look back"),
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> list[AuditLogEntry]:
     """Retrieve audit log entries with filtering options.
@@ -494,7 +493,7 @@ def _require_admin(user: dict) -> None:
 
 @router.get("/admin/users")
 async def list_users(
-    engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+    engines: EngineContainer = Depends(get_engines), user: dict = Depends(get_current_user)
 ) -> list[dict]:
     """List all users (admin only)."""
     _require_admin(user)
@@ -511,7 +510,7 @@ async def list_users(
 @router.post("/admin/users")
 async def create_user(
     data: CreateUserRequest,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> dict:
     """Create a new user (admin only)."""
@@ -564,7 +563,7 @@ class ResetResponse(BaseModel):
 
 @router.post("/reset", response_model=ResetResponse)
 async def reset_and_reseed(
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> ResetResponse:
     """Wipe all data and reseed from scratch.

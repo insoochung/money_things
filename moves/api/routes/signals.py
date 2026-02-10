@@ -20,13 +20,12 @@ Dependencies:
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from api.auth import get_current_user
-from api.deps import get_engines
+from api.deps import EngineContainer, get_engines
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +121,7 @@ class SignalDecisionResponse(BaseModel):
 async def list_signals(
     status: str | None = None,
     limit: int = 50,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> list[SignalResponse]:
     """List trading signals with optional status filtering.
@@ -245,7 +244,7 @@ async def list_signals(
 async def approve_signal(
     signal_id: int,
     decision: SignalDecisionRequest,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> SignalDecisionResponse:
     """Approve a pending signal for execution.
@@ -339,7 +338,7 @@ async def approve_signal(
 async def reject_signal(
     signal_id: int,
     decision: SignalDecisionRequest,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> SignalDecisionResponse:
     """Reject a pending signal and record for what-if tracking.

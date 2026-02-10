@@ -28,7 +28,7 @@ from fastapi import status as http_status
 from pydantic import BaseModel, Field
 
 from api.auth import get_current_user
-from api.deps import get_engines
+from api.deps import EngineContainer, get_engines
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +187,7 @@ class ThesisResponse(BaseModel):
 @router.get("/theses", response_model=list[ThesisResponse])
 async def list_theses(
     status: str | None = None,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> list[ThesisResponse]:
     """List all theses with optional status filtering.
@@ -329,7 +329,7 @@ async def list_theses(
 @router.post("/theses", response_model=ThesisResponse)
 async def create_thesis(
     thesis_request: ThesisRequest,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> ThesisResponse:
     """Create a new investment thesis.
@@ -426,7 +426,7 @@ async def create_thesis(
 async def edit_thesis_fields(
     thesis_id: int,
     body: ThesisFieldUpdate,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> ThesisResponse:
     """Edit thesis fields inline (title, text, conviction, etc.).
@@ -544,7 +544,7 @@ async def edit_thesis_fields(
 async def update_thesis(
     thesis_id: int,
     thesis_update: ThesisUpdate,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> ThesisResponse:
     """Update thesis status with reason and evidence.
@@ -708,7 +708,9 @@ async def update_thesis(
 
 @router.post("/theses/{thesis_id}/share")
 async def share_thesis(
-    thesis_id: int, engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+    thesis_id: int,
+    engines: EngineContainer = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> dict:
     """Share a thesis for others to clone.
 
@@ -754,7 +756,9 @@ async def share_thesis(
 
 @router.delete("/theses/{thesis_id}/share")
 async def unshare_thesis(
-    thesis_id: int, engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+    thesis_id: int,
+    engines: EngineContainer = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> dict:
     """Unshare a thesis."""
     try:
@@ -772,7 +776,7 @@ async def unshare_thesis(
 
 @router.get("/shared-theses")
 async def list_shared_theses(
-    engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+    engines: EngineContainer = Depends(get_engines), user: dict = Depends(get_current_user)
 ) -> list[dict]:
     """Browse theses shared by other users."""
     try:
@@ -812,7 +816,9 @@ async def list_shared_theses(
 
 @router.post("/shared-theses/{thesis_id}/clone")
 async def clone_thesis(
-    thesis_id: int, engines: Any = Depends(get_engines), user: dict = Depends(get_current_user)
+    thesis_id: int,
+    engines: EngineContainer = Depends(get_engines),
+    user: dict = Depends(get_current_user),
 ) -> dict:
     """Clone a shared thesis into your portfolio.
 

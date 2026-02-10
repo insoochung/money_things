@@ -14,13 +14,12 @@ from __future__ import annotations
 import logging
 import random
 import string
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from api.auth import get_current_user
-from api.deps import get_engines
+from api.deps import EngineContainer, get_engines
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +47,7 @@ async def get_me(user: dict = Depends(get_current_user)) -> dict:
 @router.put("/users/me")
 async def update_me(
     update: UserSettingsUpdate,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> dict:
     """Update current user settings."""
@@ -85,7 +84,7 @@ async def update_me(
 
 @router.get("/users/me/telegram-link")
 async def get_telegram_link(
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> dict:
     """Generate a 6-digit Telegram link code.

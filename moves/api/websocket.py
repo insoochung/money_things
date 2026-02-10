@@ -40,7 +40,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-from api.deps import get_engines
+from api.deps import EngineContainer, get_engines
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,9 @@ def create_websocket_router() -> APIRouter:
     router = APIRouter()
 
     @router.websocket("/ws/prices")
-    async def websocket_prices(websocket: WebSocket, engines: Any = Depends(get_engines)) -> None:
+    async def websocket_prices(
+        websocket: WebSocket, engines: EngineContainer = Depends(get_engines)
+    ) -> None:
         """WebSocket endpoint for real-time price streaming.
 
         Authenticates the WebSocket connection using session cookies, then

@@ -18,7 +18,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from api.auth import get_current_user
-from api.deps import get_engines
+from api.deps import EngineContainer, get_engines
 from engine.outcome_tracker import OutcomeTracker
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ def _get_tracker(engines: Any) -> OutcomeTracker:
 async def get_all_outcomes(
     fetch_prices: bool = Query(True, description="Fetch live prices"),
     user: dict = Depends(get_current_user),
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
 ) -> dict[str, Any]:
     """Score all active theses against actual returns."""
     tracker = _get_tracker(engines)
@@ -50,7 +50,7 @@ async def get_thesis_outcome(
     thesis_id: int,
     fetch_prices: bool = Query(True),
     user: dict = Depends(get_current_user),
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
 ) -> dict[str, Any]:
     """Score a single thesis against actual returns."""
     tracker = _get_tracker(engines)
@@ -65,7 +65,7 @@ async def get_outcome_history(
     thesis_id: int,
     limit: int = Query(30, ge=1, le=365),
     user: dict = Depends(get_current_user),
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
 ) -> list[dict[str, Any]]:
     """Get historical outcome snapshots for a thesis."""
     tracker = _get_tracker(engines)
@@ -75,7 +75,7 @@ async def get_outcome_history(
 @router.post("/snapshot")
 async def persist_snapshots(
     user: dict = Depends(get_current_user),
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
 ) -> dict[str, Any]:
     """Persist current scorecards as daily snapshots."""
     tracker = _get_tracker(engines)

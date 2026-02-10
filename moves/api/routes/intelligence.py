@@ -21,13 +21,12 @@ Dependencies:
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from api.auth import get_current_user
-from api.deps import get_engines
+from api.deps import EngineContainer, get_engines
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +219,7 @@ class PoliticianLeaderboardEntry(BaseModel):
 @router.get("/congress-trades/leaderboard", response_model=list[PoliticianLeaderboardEntry])
 async def get_congress_leaderboard(
     limit: int = Query(20, ge=1, le=100, description="Number of politicians"),
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> list[PoliticianLeaderboardEntry]:
     """Get top politicians ranked by composite score.
@@ -260,7 +259,7 @@ async def get_congress_leaderboard(
 @router.get("/congress-trades/whales", response_model=list[CongressTrade])
 async def get_whale_trades(
     days: int = Query(30, ge=1, le=365, description="Days to look back"),
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> list[CongressTrade]:
     """Get only whale-tier politician trades.
@@ -320,7 +319,7 @@ async def get_whale_trades(
 async def get_congress_trades(
     days: int = Query(30, ge=1, le=365, description="Days to look back"),
     overlap_only: bool = Query(False, description="Show only portfolio overlaps"),
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> list[CongressTrade]:
     """Get recent Congress member trades with portfolio overlap analysis.
@@ -446,7 +445,7 @@ async def get_congress_trades(
 @router.get("/congress-trades/summary", response_model=CongressSummary)
 async def get_congress_trades_summary(
     days: int = Query(30, ge=1, le=365, description="Days to analyze"),
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> CongressSummary:
     """Get Congress trades summary statistics.
@@ -601,7 +600,7 @@ class PrinciplesResponse(BaseModel):
 @router.get("/principles", response_model=PrinciplesResponse)
 async def get_principles(
     active_only: bool = Query(True, description="Show only active principles"),
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> PrinciplesResponse:
     """Get investment principles with validation statistics, summary, and discoveries.
@@ -727,7 +726,7 @@ class CreatePrincipleRequest(BaseModel):
 @router.post("/principles", status_code=status.HTTP_201_CREATED)
 async def create_principle(
     body: CreatePrincipleRequest,
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> dict:
     """Create a new investment principle.
@@ -759,7 +758,7 @@ async def get_what_if_analysis(
     decision_type: str | None = Query(
         None, pattern="^(rejected|ignored)$", description="Filter by decision type"
     ),
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> list[WhatIfAnalysis]:
     """Get what-if analysis for passed signals.
@@ -879,7 +878,7 @@ async def get_what_if_analysis(
 @router.get("/what-if/summary", response_model=WhatIfSummary)
 async def get_what_if_summary(
     days: int = Query(90, ge=1, le=365, description="Days to analyze"),
-    engines: Any = Depends(get_engines),
+    engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> WhatIfSummary:
     """Get what-if analysis summary statistics.
