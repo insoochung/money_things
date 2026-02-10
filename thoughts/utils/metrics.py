@@ -614,31 +614,23 @@ def bootstrap_metrics(history_path: str, output_path: str) -> None:
 
     Reads all idea files from the history directory, computes all available
     metrics (win rate, calibration, timeframe accuracy), and writes a
-    formatted markdown file suitable for viewing in Obsidian. The output
-    includes YAML frontmatter with metadata (update date, tracking period,
-    total ideas count).
-
-    The generated file includes:
-    - Overall performance table (total ideas, acted, passed, win rate)
-    - By-conviction-level breakdown (acted count, wins, win rate per level)
-    - Placeholder for theme analysis
-    - Calibration analysis table (expected vs actual vs calibrated per level)
-    - Timeframe accuracy table (stated vs actual holding periods per bucket)
-
-    All numbers are computed by calling the other functions in this module --
-    this function is purely a formatting/output layer.
+    formatted markdown file suitable for viewing in Obsidian.
 
     Parameters:
         history_path: Path to the ``history/ideas/`` directory containing
             the archived idea markdown files to analyse.
         output_path: File path where the generated ``metrics.md`` will be
             written. Overwrites any existing file at this path.
-
-    Side effects:
-        - Reads idea files from disk (via the various ``calculate_*``
-          functions).
-        - Writes one file to disk at ``output_path``.
     """
+    metrics_data = _compute_all_metrics(history_path)
+    content = _generate_markdown_content(metrics_data)
+
+    with open(output_path, "w") as f:
+        f.write(content)
+
+
+def _compute_all_metrics(history_path: str) -> dict:
+    """Compute all metrics and idea statistics."""
     win_rate = calculate_win_rate(history_path)
     calibration = calculate_calibration(history_path)
     timeframe = calculate_timeframe_accuracy(history_path)
@@ -648,6 +640,7 @@ def bootstrap_metrics(history_path: str, output_path: str) -> None:
     acted_count = len([t for t in ideas if t["status"] == "acted"])
     passed_count = len([t for t in ideas if t["status"] == "passed"])
 
+    # Extract tracking period
     dates: list[date] = []
     for t in ideas:
         try:
@@ -656,54 +649,81 @@ def bootstrap_metrics(history_path: str, output_path: str) -> None:
             pass
     tracking_since = min(dates).isoformat() if dates else date.today().isoformat()
 
-    def _fmt_rate(rate: float | None) -> str:
-        return f"{rate}%" if rate else "-"
+    return {
+        "win_rate": win_rate,
+        "calibration": calibration,
+        "timeframe": timeframe,
+        "total": total,
+        "acted_count": acted_count,
+        "passed_count": passed_count,
+        "tracking_since": tracking_since,
+    }
 
-    def _fmt_cal(cal_val: bool | None) -> str:
-        return str(cal_val) if cal_val is not None else "-"
 
-    def _fmt_tf(bucket: str) -> str:
-        d = timeframe["by_timeframe"][bucket]
-        avg = d["avg_actual_days"] or "-"
-        return f"| {bucket} | {d['count']} | {avg} days | {d['accuracy']} |"
+def _generate_markdown_content(metrics_data: dict) -> str:
+    """Generate the complete markdown content for metrics.md."""
+    lines = []
 
-    wr = win_rate["by_conviction"]
-    hi_r = _fmt_rate(wr["high"]["rate"])
-    md_r = _fmt_rate(wr["medium"]["rate"])
-    lo_r = _fmt_rate(wr["low"]["rate"])
+    lines.extend(_generate_frontmatter(metrics_data))
+    lines.extend(_generate_header_section())
+    lines.extend(_generate_overall_performance_section(metrics_data))
+    lines.extend(_generate_conviction_breakdown_section(metrics_data))
+    lines.extend(_generate_theme_section())
+    lines.extend(_generate_calibration_section(metrics_data))
+    lines.extend(_generate_timeframe_section(metrics_data))
 
-    wr_total = _fmt_rate(win_rate["win_rate"])
+    return "\n".join(lines) + "\n"
 
-    cal = calibration
-    hi_a = _fmt_rate(cal["high"]["actual"])
-    md_a = _fmt_rate(cal["medium"]["actual"])
-    lo_a = _fmt_rate(cal["low"]["actual"])
-    hi_c = _fmt_cal(cal["high"]["calibrated"])
-    md_c = _fmt_cal(cal["medium"]["calibrated"])
-    lo_c = _fmt_cal(cal["low"]["calibrated"])
 
-    lines = [
+def _generate_frontmatter(metrics_data: dict) -> list[str]:
+    """Generate YAML frontmatter section."""
+    return [
         "---",
         f"updated: {date.today().isoformat()}",
-        f"tracking_since: {tracking_since}",
-        f"total_ideas: {total}",
+        f"tracking_since: {metrics_data['tracking_since']}",
+        f"total_ideas: {metrics_data['total']}",
         "---",
         "",
+    ]
+
+
+def _generate_header_section() -> list[str]:
+    """Generate header and description section."""
+    return [
         "# Decision Metrics",
         "",
         "All metrics computed from `history/ideas/` files via "
         "`utils/metrics.py`. Never LLM-generated.",
         "",
+    ]
+
+
+def _generate_overall_performance_section(metrics_data: dict) -> list[str]:
+    """Generate overall performance table section."""
+    wr_total = _format_rate(metrics_data["win_rate"]["win_rate"])
+
+    return [
         "## Overall Performance",
         "",
         "| Metric | Value |",
         "|--------|-------|",
-        f"| Total ideas | {total} |",
-        f"| Acted | {acted_count} |",
-        f"| Passed | {passed_count} |",
+        f"| Total ideas | {metrics_data['total']} |",
+        f"| Acted | {metrics_data['acted_count']} |",
+        f"| Passed | {metrics_data['passed_count']} |",
         f"| Win rate (acted) | {wr_total} |",
         "| Pass accuracy | - |",
         "",
+    ]
+
+
+def _generate_conviction_breakdown_section(metrics_data: dict) -> list[str]:
+    """Generate conviction level breakdown section."""
+    wr = metrics_data["win_rate"]["by_conviction"]
+    hi_r = _format_rate(wr["high"]["rate"])
+    md_r = _format_rate(wr["medium"]["rate"])
+    lo_r = _format_rate(wr["low"]["rate"])
+
+    return [
         "## By Conviction Level",
         "",
         "| Conviction | Acted | Wins | Win Rate |",
@@ -712,10 +732,30 @@ def bootstrap_metrics(history_path: str, output_path: str) -> None:
         f"| Medium | {wr['medium']['acted']} | {wr['medium']['wins']} | {md_r} |",
         f"| Low | {wr['low']['acted']} | {wr['low']['wins']} | {lo_r} |",
         "",
+    ]
+
+
+def _generate_theme_section() -> list[str]:
+    """Generate theme analysis placeholder section."""
+    return [
         "## By Theme",
         "",
         "[Theme-specific win rates will appear here as ideas are tracked]",
         "",
+    ]
+
+
+def _generate_calibration_section(metrics_data: dict) -> list[str]:
+    """Generate calibration analysis section."""
+    cal = metrics_data["calibration"]
+    hi_a = _format_rate(cal["high"]["actual"])
+    md_a = _format_rate(cal["medium"]["actual"])
+    lo_a = _format_rate(cal["low"]["actual"])
+    hi_c = _format_calibration(cal["high"]["calibrated"])
+    md_c = _format_calibration(cal["medium"]["calibrated"])
+    lo_c = _format_calibration(cal["low"]["calibrated"])
+
+    return [
         "## Calibration Analysis",
         "",
         "Compares stated conviction vs actual outcomes.",
@@ -728,20 +768,38 @@ def bootstrap_metrics(history_path: str, output_path: str) -> None:
         "",
         f"Overall: {cal['overall_calibration']}",
         "",
+    ]
+
+
+def _generate_timeframe_section(metrics_data: dict) -> list[str]:
+    """Generate timeframe accuracy section."""
+    timeframe = metrics_data["timeframe"]
+
+    def _format_timeframe_row(bucket: str) -> str:
+        d = timeframe["by_timeframe"][bucket]
+        avg = d["avg_actual_days"] or "-"
+        return f"| {bucket} | {d['count']} | {avg} days | {d['accuracy']} |"
+
+    return [
         "## Timeframe Accuracy",
         "",
         "Compares stated timeframe vs actual holding period.",
         "",
         "| Timeframe | Count | Avg Actual | Accuracy |",
         "|-----------|-------|------------|----------|",
-        _fmt_tf("< 1 month"),
-        _fmt_tf("1-3 months"),
-        _fmt_tf("3-6 months"),
-        _fmt_tf("6-12 months"),
-        _fmt_tf("> 12 months"),
+        _format_timeframe_row("< 1 month"),
+        _format_timeframe_row("1-3 months"),
+        _format_timeframe_row("3-6 months"),
+        _format_timeframe_row("6-12 months"),
+        _format_timeframe_row("> 12 months"),
     ]
 
-    content = "\n".join(lines) + "\n"
 
-    with open(output_path, "w") as f:
-        f.write(content)
+def _format_rate(rate: float | None) -> str:
+    """Format rate as percentage or dash if None."""
+    return f"{rate}%" if rate else "-"
+
+
+def _format_calibration(cal_val: bool | None) -> str:
+    """Format calibration boolean or dash if None."""
+    return str(cal_val) if cal_val is not None else "-"

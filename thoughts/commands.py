@@ -403,16 +403,30 @@ def cmd_journal() -> str:
 def cmd_brief() -> str:
     """Daily briefing: live prices vs triggers, thesis status, upcoming earnings.
 
-    Fetches current prices for all thesis symbols and watchlist items,
-    checks proximity to triggers, and shows upcoming earnings.
-
     Returns:
         Formatted briefing for Telegram.
     """
     engine = _get_engine()
-
     sections: list[str] = ["📊 **Daily Brief**\n"]
 
+    # Gather data
+    all_symbols, thesis_symbols, triggers, prices = _gather_brief_data(engine)
+
+    # Generate sections
+    _add_thesis_section(sections, engine.get_theses(), thesis_symbols, prices)
+    _add_trigger_proximity_section(sections, triggers, prices)
+    _add_earnings_section(sections, all_symbols)
+    _add_recent_notes_section(sections, engine)
+    _add_pending_signals_section(sections, engine)
+
+    if len(sections) == 1:
+        return "📊 Nothing to brief on yet. Add theses with /think."
+
+    return "\n".join(sections)
+
+
+def _gather_brief_data(engine):
+    """Gather all data needed for the brief."""
     # Gather all symbols from theses + watchlist triggers
     theses = engine.get_theses()
     all_symbols: set[str] = set()
@@ -435,54 +449,66 @@ def cmd_brief() -> str:
     if all_symbols:
         prices = _fetch_prices(sorted(all_symbols))
 
-    # ── Thesis Summary with Live Prices ──
-    if theses:
-        sections.append("**Theses:**")
-        for t in theses:
-            conviction = t.get("conviction", 0) or 0
-            pct = int(conviction) if conviction > 1 else int(conviction * 100)
-            syms = thesis_symbols.get(t["id"], [])
-            sym_prices = []
-            for s in syms:
-                p = prices.get(s)
-                if p:
-                    sym_prices.append(f"{s} ${p:.2f}")
-                else:
-                    sym_prices.append(s)
-            sym_str = ", ".join(sym_prices) if sym_prices else "no symbols"
-            sections.append(f"  • {t['title']} ({pct}%) — {sym_str}")
-        sections.append("")
+    return all_symbols, thesis_symbols, triggers, prices
 
-    # ── Watchlist Triggers: Proximity ──
-    if triggers and prices:
-        sections.append("**Trigger Proximity:**")
-        # Group by symbol
-        by_symbol: dict[str, list[dict]] = {}
-        for tr in triggers:
-            sym = tr["symbol"].upper()
-            by_symbol.setdefault(sym, []).append(tr)
 
-        for sym in sorted(by_symbol):
-            current = prices.get(sym)
-            if not current:
-                continue
-            for tr in by_symbol[sym]:
-                target = tr["target_value"]
-                pct_away = ((target - current) / current) * 100
-                direction = "↑" if pct_away > 0 else "↓"
-                ttype = tr["trigger_type"].replace("_", " ")
-                alert = ""
-                if abs(pct_away) < 5:
-                    alert = " ⚠️ CLOSE"
-                elif abs(pct_away) < 10:
-                    alert = " 👀"
-                sections.append(
-                    f"  • {sym} {ttype}: ${target:.0f} "
-                    f"({direction}{abs(pct_away):.1f}% from ${current:.2f}){alert}"
-                )
-        sections.append("")
+def _add_thesis_section(sections: list[str], theses, thesis_symbols, prices):
+    """Add thesis summary with live prices to sections."""
+    if not theses:
+        return
 
-    # ── Upcoming Earnings ──
+    sections.append("**Theses:**")
+    for t in theses:
+        conviction = t.get("conviction", 0) or 0
+        pct = int(conviction) if conviction > 1 else int(conviction * 100)
+        syms = thesis_symbols.get(t["id"], [])
+        sym_prices = []
+        for s in syms:
+            p = prices.get(s)
+            if p:
+                sym_prices.append(f"{s} ${p:.2f}")
+            else:
+                sym_prices.append(s)
+        sym_str = ", ".join(sym_prices) if sym_prices else "no symbols"
+        sections.append(f"  • {t['title']} ({pct}%) — {sym_str}")
+    sections.append("")
+
+
+def _add_trigger_proximity_section(sections: list[str], triggers, prices):
+    """Add watchlist trigger proximity analysis to sections."""
+    if not (triggers and prices):
+        return
+
+    sections.append("**Trigger Proximity:**")
+    # Group by symbol
+    by_symbol: dict[str, list[dict]] = {}
+    for tr in triggers:
+        sym = tr["symbol"].upper()
+        by_symbol.setdefault(sym, []).append(tr)
+
+    for sym in sorted(by_symbol):
+        current = prices.get(sym)
+        if not current:
+            continue
+        for tr in by_symbol[sym]:
+            target = tr["target_value"]
+            pct_away = ((target - current) / current) * 100
+            direction = "↑" if pct_away > 0 else "↓"
+            ttype = tr["trigger_type"].replace("_", " ")
+            alert = ""
+            if abs(pct_away) < 5:
+                alert = " ⚠️ CLOSE"
+            elif abs(pct_away) < 10:
+                alert = " 👀"
+            sections.append(
+                f"  • {sym} {ttype}: ${target:.0f} "
+                f"({direction}{abs(pct_away):.1f}% from ${current:.2f}){alert}"
+            )
+    sections.append("")
+
+
+def _add_earnings_section(sections: list[str], all_symbols):
+    """Add upcoming earnings information to sections."""
     try:
         from datetime import date as date_type
         from datetime import timedelta
@@ -492,38 +518,16 @@ def cmd_brief() -> str:
         today = date_type.today()
         week_out = today + timedelta(days=7)
         earnings_items: list[str] = []
-        for sym in sorted(all_symbols):
-            try:
-                ticker = yf.Ticker(sym)
-                cal = ticker.calendar
-                if cal is not None and not (
-                    hasattr(cal, "empty") and cal.empty
-                ):
-                    # cal can be a dict or DataFrame
-                    if isinstance(cal, dict):
-                        ed = cal.get("Earnings Date")
-                        if isinstance(ed, list) and ed:
-                            ed = ed[0]
-                        if ed and hasattr(ed, "date"):
-                            ed = ed.date()
-                    else:
-                        # DataFrame
-                        if "Earnings Date" in cal.columns:
-                            ed = cal["Earnings Date"].iloc[0]
-                            if hasattr(ed, "date"):
-                                ed = ed.date()
-                        else:
-                            ed = None
 
-                    if ed and today <= ed <= week_out:
-                        days = (ed - today).days
-                        urgency = " ⏰" if days <= 2 else ""
-                        earnings_items.append(
-                            f"  • {sym}: {ed.isoformat()} "
-                            f"({days}d away){urgency}"
-                        )
-            except Exception:
-                continue
+        for sym in sorted(all_symbols):
+            earnings_date = _get_earnings_date(sym)
+            if earnings_date and today <= earnings_date <= week_out:
+                days = (earnings_date - today).days
+                urgency = " ⏰" if days <= 2 else ""
+                earnings_items.append(
+                    f"  • {sym}: {earnings_date.isoformat()} "
+                    f"({days}d away){urgency}"
+                )
 
         if earnings_items:
             sections.append("**Earnings This Week:**")
@@ -532,32 +536,63 @@ def cmd_brief() -> str:
     except Exception:
         pass
 
-    # ── Recent Notes (last 3) ──
+
+def _get_earnings_date(symbol: str):
+    """Get earnings date for a symbol."""
+    try:
+        import yfinance as yf
+
+        ticker = yf.Ticker(symbol)
+        cal = ticker.calendar
+        if cal is None or (hasattr(cal, "empty") and cal.empty):
+            return None
+
+        # cal can be a dict or DataFrame
+        if isinstance(cal, dict):
+            ed = cal.get("Earnings Date")
+            if isinstance(ed, list) and ed:
+                ed = ed[0]
+            if ed and hasattr(ed, "date"):
+                return ed.date()
+        else:
+            # DataFrame
+            if "Earnings Date" in cal.columns:
+                ed = cal["Earnings Date"].iloc[0]
+                if hasattr(ed, "date"):
+                    return ed.date()
+        return None
+    except Exception:
+        return None
+
+
+def _add_recent_notes_section(sections: list[str], engine):
+    """Add recent notes to sections."""
     thoughts = engine.list_thoughts(limit=3)
-    if thoughts:
-        sections.append("**Recent Notes:**")
-        for t in thoughts:
-            date = t.get("created_at", "")[:10]
-            content = t["content"][:60]
-            tag = f" [{t['linked_symbol']}]" if t.get("linked_symbol") else ""
-            sections.append(f"  • [{date}]{tag} {content}")
-        sections.append("")
+    if not thoughts:
+        return
 
-    # ── Pending Signals ──
+    sections.append("**Recent Notes:**")
+    for t in thoughts:
+        date = t.get("created_at", "")[:10]
+        content = t["content"][:60]
+        tag = f" [{t['linked_symbol']}]" if t.get("linked_symbol") else ""
+        sections.append(f"  • [{date}]{tag} {content}")
+    sections.append("")
+
+
+def _add_pending_signals_section(sections: list[str], engine):
+    """Add pending signals to sections."""
     pending = engine.get_signals(status="pending")
-    if pending:
-        sections.append(f"**Pending Signals:** {len(pending)}")
-        for sig in pending[:3]:
-            sections.append(
-                f"  • {sig.get('direction', '?')} {sig.get('symbol', '?')} "
-                f"— {sig.get('reasoning', 'no reason')[:60]}"
-            )
-        sections.append("")
+    if not pending:
+        return
 
-    if len(sections) == 1:
-        return "📊 Nothing to brief on yet. Add theses with /think."
-
-    return "\n".join(sections)
+    sections.append(f"**Pending Signals:** {len(pending)}")
+    for sig in pending[:3]:
+        sections.append(
+            f"  • {sig.get('direction', '?')} {sig.get('symbol', '?')} "
+            f"— {sig.get('reasoning', 'no reason')[:60]}"
+        )
+    sections.append("")
 
 
 def _fetch_prices(symbols: list[str]) -> dict[str, float]:

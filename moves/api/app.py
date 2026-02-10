@@ -332,7 +332,17 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Global exception handler for debugging
+    _setup_exception_handlers(app)
+    _setup_middleware(app)
+    _setup_health_endpoint(app)
+    _setup_routes(app)
+    _setup_dashboard(app)
+
+    return app
+
+
+def _setup_exception_handlers(app: FastAPI) -> None:
+    """Setup global exception handlers for the application."""
     @app.exception_handler(Exception)
     async def global_exception_handler(request, exc):
         import traceback
@@ -344,6 +354,9 @@ def create_app() -> FastAPI:
             content={"detail": str(exc)},
         )
 
+
+def _setup_middleware(app: FastAPI) -> None:
+    """Setup all middleware for the application."""
     # CORS middleware for dashboard
     app.add_middleware(
         CORSMiddleware,
@@ -371,7 +384,9 @@ def create_app() -> FastAPI:
         same_site="lax",
     )
 
-    # Health check endpoint (unprotected)
+
+def _setup_health_endpoint(app: FastAPI) -> None:
+    """Setup health check endpoint."""
     @app.get("/health")
     async def health_check() -> dict[str, str]:
         """Health check endpoint for monitoring and load balancers.
@@ -385,6 +400,9 @@ def create_app() -> FastAPI:
         settings = get_settings()
         return {"status": "healthy", "mode": settings.mode, "version": "2.1.0"}
 
+
+def _setup_routes(app: FastAPI) -> None:
+    """Setup all application routes and routers."""
     # Authentication routes
     app.include_router(create_auth_router())
 
@@ -405,65 +423,73 @@ def create_app() -> FastAPI:
     # WebSocket for real-time prices
     app.include_router(create_websocket_router())
 
-    # Dashboard static files (CSS, JS served from /dashboard/)
+
+def _setup_dashboard(app: FastAPI) -> None:
+    """Setup dashboard static files and root endpoint."""
     dashboard_dir = Path(__file__).parent.parent / "dashboard"
 
     if dashboard_dir.exists() and (dashboard_dir / "index.html").exists():
-        app.mount(
-            "/dashboard", StaticFiles(directory=str(dashboard_dir), html=True), name="dashboard"
-        )
-
-        @app.middleware("http")
-        async def no_cache_dashboard(request: Request, call_next):  # type: ignore[misc]
-            """Prevent browser caching of dashboard assets during development."""
-            response = await call_next(request)
-            if request.url.path.startswith("/dashboard/"):
-                response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-            return response
-
-        @app.get("/", response_class=HTMLResponse)
-        async def dashboard() -> HTMLResponse:
-            """Redirect root to the dashboard index page.
-
-            Serves the dashboard index.html which loads CSS/JS from /dashboard/.
-
-            Returns:
-                HTML response with the dashboard page.
-            """
-            return HTMLResponse((dashboard_dir / "index.html").read_text())
-
+        _setup_static_dashboard(app, dashboard_dir)
     else:
-        # Placeholder response when dashboard files don't exist
-        @app.get("/", response_class=HTMLResponse)
-        async def dashboard_placeholder() -> HTMLResponse:
-            """Placeholder dashboard when static files are not available.
+        _setup_placeholder_dashboard(app)
 
-            Returns a simple HTML page indicating the dashboard is under construction.
-            This is used during Phase 2.1 before the dashboard files are created.
 
-            Returns:
-                Simple HTML page with construction message.
-            """
-            return HTMLResponse("""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Money Moves Dashboard</title>
-                <style>
-                    body { font-family: Inter, sans-serif; margin: 2rem; }
-                    .status { color: #37352f; font-size: 1.1rem; }
-                </style>
-            </head>
-            <body>
-                <h1>Money Moves Dashboard</h1>
-                <p class="status">FastAPI backend is running ✅</p>
-                <p>Dashboard UI will be available in Phase 2.2</p>
-                <p><a href="/docs">View API documentation</a></p>
-            </body>
-            </html>
-            """)
+def _setup_static_dashboard(app: FastAPI, dashboard_dir: Path) -> None:
+    """Setup dashboard with static files."""
+    app.mount(
+        "/dashboard", StaticFiles(directory=str(dashboard_dir), html=True), name="dashboard"
+    )
 
-    return app
+    @app.middleware("http")
+    async def no_cache_dashboard(request: Request, call_next):  # type: ignore[misc]
+        """Prevent browser caching of dashboard assets during development."""
+        response = await call_next(request)
+        if request.url.path.startswith("/dashboard/"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return response
+
+    @app.get("/", response_class=HTMLResponse)
+    async def dashboard() -> HTMLResponse:
+        """Redirect root to the dashboard index page.
+
+        Serves the dashboard index.html which loads CSS/JS from /dashboard/.
+
+        Returns:
+            HTML response with the dashboard page.
+        """
+        return HTMLResponse((dashboard_dir / "index.html").read_text())
+
+
+def _setup_placeholder_dashboard(app: FastAPI) -> None:
+    """Setup placeholder dashboard when static files are not available."""
+    @app.get("/", response_class=HTMLResponse)
+    async def dashboard_placeholder() -> HTMLResponse:
+        """Placeholder dashboard when static files are not available.
+
+        Returns a simple HTML page indicating the dashboard is under construction.
+        This is used during Phase 2.1 before the dashboard files are created.
+
+        Returns:
+            Simple HTML page with construction message.
+        """
+        return HTMLResponse("""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Money Moves Dashboard</title>
+            <style>
+                body { font-family: Inter, sans-serif; margin: 2rem; }
+                .status { color: #37352f; font-size: 1.1rem; }
+            </style>
+        </head>
+        <body>
+            <h1>Money Moves Dashboard</h1>
+            <p class="status">FastAPI backend is running ✅</p>
+            <p>Dashboard UI will be available in Phase 2.2</p>
+            <p><a href="/docs">View API documentation</a></p>
+        </body>
+        </html>
+        """)
 
 
 # Development server entry point
