@@ -74,12 +74,32 @@ Style: content-first, no chrome, warm, typography-driven
 - `PLAN.md` — Phased implementation plan
 - `spec/clawdbot.md` — OpenClaw/Telegram setup guide
 
-## Python Environment
+## Quick Start
 
 ```bash
+# Setup virtual environment (first time only)
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+
+# Run development server (mock mode with Google OAuth)
+python3 run.py
+
+# Access dashboard at http://localhost:8000
+# Test with: ./run_tests.sh
+```
+
+## Testing
+
+```bash
+# Run all tests (recommended - avoids event loop contamination)
+./run_tests.sh
+
+# Run specific test file
+python -m pytest tests/test_database.py -v
+
+# Run with timeout and stop on first failure
+./run_tests.sh -x --timeout=10
 ```
 
 ## Development Rules

@@ -12,22 +12,19 @@ Conversational thesis development, research, review, and learning engine. The "t
 
 | Command | Purpose |
 |---------|---------|
-| `/thesis "belief"` | Develop an investment thesis conversationally |
-| `/discover T001` | Find tickers aligned with thesis |
-| `/research AAPL` | Deep-dive research on a candidate |
-| `/idea AAPL buy` | Create BUY/SELL recommendation |
-| `/push T001` | Send validated thesis to money_moves |
-| `/pulse` | Portfolio health scan (stores prices) |
-| `/review` | Outcome review + learning |
-| `/thought "..."` | Capture floating thoughts |
-| `/synthesize` | Thesis-level portfolio view |
-| `/remember` | Access persistent memory |
-| `/refresh` | Update prices in research files |
-| `/raise-cash 10000` | Tax-optimized sell recommendations |
-| `/portfolio` | View/edit holdings |
-| `/act 001` | Record executed trade |
-| `/pass 001` | Record passed idea |
-| `/context` | Improve system from friction |
+| `/think "idea"` | Research an idea with AI sub-agent |
+| `/think result <json>` | Apply research output (auto-called after /think) |
+| `/note <text>` | Add a note to the journal |
+| `/journal` | Display recent journal entries |
+| `/brief` | Daily briefing with prices, triggers, earnings |
+| `/trade <details>` | Record executed trade |
+
+## Integration Commands
+These are available when called from the money_moves Telegram bot:
+- Thesis research and development 
+- Context building from portfolio state
+- Sub-agent spawning for deep analysis
+- Research output parsing and database updates
 
 ## Thesis Lifecycle
 
@@ -60,8 +57,16 @@ See `spec/money_thoughts.md` for complete details including folder structure, co
 
 ## Python Environment
 
+This module integrates with money_moves via the bridge.py interface.
+Commands are triggered through the moves Telegram bot handler.
+
 ```bash
-source .venv/bin/activate && python3 -c "..."
+# Testing individual functions
+cd ~/workspace/money/thoughts
+python3 -c "from commands import cmd_brief; print(cmd_brief())"
+
+# Testing with specific engine
+python3 -c "from engine import ThoughtsEngine; e = ThoughtsEngine(); print(e.db.summary())"
 ```
 
 ## Evolved From
