@@ -1,29 +1,4 @@
-"""Tests for the FastAPI application and route endpoints.
-
-This module tests the main FastAPI application including:
-- Application startup and shutdown
-- Health check endpoint
-- All API route endpoints
-- Authentication middleware
-- WebSocket connections
-- Error handling
-
-Uses FastAPI TestClient for HTTP testing and pytest-asyncio for async tests.
-Tests run against a seeded test database with realistic data.
-
-Classes:
-    TestApp: Test FastAPI application lifecycle.
-    TestFundRoutes: Test fund portfolio endpoints.
-    TestThesesRoutes: Test thesis management endpoints.
-    TestSignalsRoutes: Test signal management endpoints.
-    TestTradesRoutes: Test trade history endpoints.
-    TestPerformanceRoutes: Test performance analysis endpoints.
-    TestRiskRoutes: Test risk monitoring endpoints.
-    TestIntelligenceRoutes: Test intelligence features endpoints.
-    TestAdminRoutes: Test administrative endpoints.
-    TestWebSocket: Test WebSocket price streaming.
-    TestAuthentication: Test OAuth authentication flow.
-"""
+"""Tests for FastAPI application and route endpoints."""
 
 from __future__ import annotations
 
@@ -37,7 +12,7 @@ from db.database import Database
 
 
 class TestApp:
-    """Test FastAPI application lifecycle and basic functionality."""
+    """Test FastAPI application and health endpoints."""
 
     def test_app_creation(self) -> None:
         """Test that the FastAPI app can be created."""
@@ -74,10 +49,10 @@ class TestApp:
 
 
 class TestAuthentication:
-    """Test OAuth authentication middleware and endpoints."""
+    """Test authentication middleware."""
 
     def test_auth_middleware_blocks_unauthed_requests(self, seeded_db: Database) -> None:
-        """Test that auth middleware blocks unauthenticated requests when not in testing mode."""
+        """Test that auth middleware blocks unauthenticated requests."""
         import os
 
         import api.deps as deps
@@ -100,7 +75,7 @@ class TestAuthentication:
                 os.environ["MOVES_TESTING"] = "true"
 
     def test_health_endpoint_unprotected(self, seeded_db: Database) -> None:
-        """Test that health endpoint bypasses authentication."""
+        """Test health endpoint bypasses authentication."""
         import api.deps as deps
 
         deps._engines["container"] = MagicMock()
@@ -119,7 +94,6 @@ class TestAuthentication:
         client = TestClient(app)
 
         response = client.get("/auth/login", follow_redirects=False)
-        # Google OAuth: redirects to Google, or password form
         assert response.status_code in (200, 302)
 
     def test_logout_redirects(self, seeded_db: Database) -> None:
@@ -459,6 +433,8 @@ class TestTradesRoutes:
 
         response = client.get("/api/fund/trades?symbol=AAPL&action=BUY&limit=10")
         assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
 
     def test_trades_summary(self, seeded_db: Database) -> None:
         """Test GET /api/fund/trades/summary endpoint."""
