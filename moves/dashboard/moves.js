@@ -199,7 +199,7 @@
       else {
         html += arr.map(t => {
           const syms = (t.symbols || t.tickers || []).join(', ');
-          const conv = t.conviction != null ? Math.round(t.conviction * 100) : 50;
+          const conv = t.conviction != null ? Math.round(t.conviction > 1 ? t.conviction : t.conviction * 100) : 50;
           return `<div class="thesis-card" data-id="${t.id}">
             <div class="thesis-header" onclick="this.parentElement.classList.toggle('expanded')">
               <span class="thesis-title">${t.title || t.name}</span>
@@ -894,7 +894,7 @@
     if (s.thesis_title) {
       opener += ` based on the ${s.thesis_title} thesis`;
       if (s.thesis_status) opener += ` (${s.thesis_status}`;
-      if (s.thesis_conviction != null) opener += `, ${Math.round(s.thesis_conviction * 100)}% conviction`;
+      if (s.thesis_conviction != null) opener += `, ${Math.round(s.thesis_conviction > 1 ? s.thesis_conviction : s.thesis_conviction * 100)}% conviction`;
       if (s.thesis_status || s.thesis_conviction != null) opener += ')';
     }
     opener += '.';
@@ -1257,7 +1257,7 @@
             <span class="badge">${t.strategy}</span>
           </div>
           <div class="thesis-meta">
-            Shared by ${t.shared_by} · ${t.horizon} · ${fmtPct(t.conviction * 100)} conviction
+            Shared by ${t.shared_by} · ${t.horizon} · ${fmtPct(t.conviction > 1 ? t.conviction : t.conviction * 100)} conviction
           </div>
           <div class="thesis-symbols">${(t.symbols || []).join(', ')}</div>
           <button class="btn-sm" onclick="cloneThesis(${t.thesis_id})">Clone</button>
