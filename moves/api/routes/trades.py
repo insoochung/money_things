@@ -219,6 +219,131 @@ async def list_trades(
         )
 
 
+def _build_trades_where_clause(
+    symbol: str | None,
+    thesis_id: int | None,
+    days: int,
+) -> tuple[str, list[str]]:
+    """Build WHERE clause for trades queries with filters.
+
+    Args:
+        symbol: Optional symbol filter.
+        thesis_id: Optional thesis filter.
+        days: Number of days to analyze.
+
+    Returns:
+        Tuple of (where_clause, params_list).
+    """
+    where_conditions = [f"t.timestamp >= datetime('now', '-{days} days')"]
+    params = []
+
+    if symbol:
+        where_conditions.append("t.symbol = ?")
+        params.append(symbol.upper())
+
+    if thesis_id:
+        where_conditions.append("s.thesis_id = ?")
+        params.append(thesis_id)
+
+    where_clause = "WHERE " + " AND ".join(where_conditions)
+    return where_clause, params
+
+
+def _get_basic_trade_stats(db: Any, where_clause: str, params: list) -> dict | None:
+    """Get basic trade statistics from database.
+
+    Args:
+        db: Database connection.
+        where_clause: SQL WHERE clause.
+        params: Query parameters.
+
+    Returns:
+        Dict with basic trade statistics or None if no data.
+    """
+    return db.fetchone(
+        f"""
+        SELECT
+            COUNT(*) as total_trades,
+            SUM(CASE WHEN t.action IN ('BUY', 'COVER') THEN 1 ELSE 0 END) as buy_trades,
+            SUM(CASE WHEN t.action IN ('SELL', 'SHORT') THEN 1 ELSE 0 END) as sell_trades,
+            SUM(ABS(t.total_value)) as total_volume,
+            SUM(t.fees) as total_fees,
+            SUM(t.realized_pnl) as total_realized_pnl,
+            MAX(t.realized_pnl) as best_trade,
+            MIN(t.realized_pnl) as worst_trade
+        FROM trades t
+        LEFT JOIN signals s ON t.signal_id = s.id
+        {where_clause}
+    """,
+        params,
+    )
+
+
+def _get_winning_trades_stats(db: Any, where_clause: str, params: list) -> dict | None:
+    """Get winning trades statistics.
+
+    Args:
+        db: Database connection.
+        where_clause: SQL WHERE clause.
+        params: Query parameters.
+
+    Returns:
+        Dict with winning trade statistics.
+    """
+    return db.fetchone(
+        f"""
+        SELECT
+            COUNT(*) as win_count,
+            AVG(t.realized_pnl) as avg_win
+        FROM trades t
+        LEFT JOIN signals s ON t.signal_id = s.id
+        {where_clause} AND t.realized_pnl > 0
+    """,
+        params,
+    )
+
+
+def _get_losing_trades_stats(db: Any, where_clause: str, params: list) -> dict | None:
+    """Get losing trades statistics.
+
+    Args:
+        db: Database connection.
+        where_clause: SQL WHERE clause.
+        params: Query parameters.
+
+    Returns:
+        Dict with losing trade statistics.
+    """
+    return db.fetchone(
+        f"""
+        SELECT
+            COUNT(*) as loss_count,
+            AVG(t.realized_pnl) as avg_loss
+        FROM trades t
+        LEFT JOIN signals s ON t.signal_id = s.id
+        {where_clause} AND t.realized_pnl < 0
+    """,
+        params,
+    )
+
+
+def _create_empty_trades_summary() -> TradesSummary:
+    """Create empty trades summary for when no trades found."""
+    return TradesSummary(
+        total_trades=0,
+        buy_trades=0,
+        sell_trades=0,
+        total_volume=0.0,
+        total_fees=0.0,
+        total_realized_pnl=0.0,
+        win_rate=0.0,
+        avg_win=0.0,
+        avg_loss=0.0,
+        best_trade=0.0,
+        worst_trade=0.0,
+    )
+
+
 @router.get("/trades/summary", response_model=TradesSummary)
 async def get_trades_summary(
     symbol: str | None = Query(None, description="Filter by symbol"),
@@ -242,83 +367,17 @@ async def get_trades_summary(
         TradesSummary model with aggregated statistics.
     """
     try:
-        # Build WHERE clause based on filters
-        where_conditions = [f"t.timestamp >= datetime('now', '-{days} days')"]
-        params = []
+        where_clause, params = _build_trades_where_clause(symbol, thesis_id, days)
 
-        if symbol:
-            where_conditions.append("t.symbol = ?")
-            params.append(symbol.upper())
-
-        if thesis_id:
-            where_conditions.append("s.thesis_id = ?")
-            params.append(thesis_id)
-
-        where_clause = "WHERE " + " AND ".join(where_conditions)
-
-        # Get trade statistics
-        stats = engines.db.fetchone(
-            f"""
-            SELECT
-                COUNT(*) as total_trades,
-                SUM(CASE WHEN t.action IN ('BUY', 'COVER') THEN 1 ELSE 0 END) as buy_trades,
-                SUM(CASE WHEN t.action IN ('SELL', 'SHORT') THEN 1 ELSE 0 END) as sell_trades,
-                SUM(ABS(t.total_value)) as total_volume,
-                SUM(t.fees) as total_fees,
-                SUM(t.realized_pnl) as total_realized_pnl,
-                MAX(t.realized_pnl) as best_trade,
-                MIN(t.realized_pnl) as worst_trade
-            FROM trades t
-            LEFT JOIN signals s ON t.signal_id = s.id
-            {where_clause}
-        """,
-            params,
-        )
-
+        stats = _get_basic_trade_stats(engines.db, where_clause, params)
         if not stats:
-            # Return empty summary if no trades found
-            return TradesSummary(
-                total_trades=0,
-                buy_trades=0,
-                sell_trades=0,
-                total_volume=0.0,
-                total_fees=0.0,
-                total_realized_pnl=0.0,
-                win_rate=0.0,
-                avg_win=0.0,
-                avg_loss=0.0,
-                best_trade=0.0,
-                worst_trade=0.0,
-            )
+            return _create_empty_trades_summary()
 
-        # Calculate win rate and averages
-        winning_trades = engines.db.fetchone(
-            f"""
-            SELECT
-                COUNT(*) as win_count,
-                AVG(t.realized_pnl) as avg_win
-            FROM trades t
-            LEFT JOIN signals s ON t.signal_id = s.id
-            {where_clause} AND t.realized_pnl > 0
-        """,
-            params,
-        )
-
-        losing_trades = engines.db.fetchone(
-            f"""
-            SELECT
-                COUNT(*) as loss_count,
-                AVG(t.realized_pnl) as avg_loss
-            FROM trades t
-            LEFT JOIN signals s ON t.signal_id = s.id
-            {where_clause} AND t.realized_pnl < 0
-        """,
-            params,
-        )
+        winning_trades = _get_winning_trades_stats(engines.db, where_clause, params)
+        losing_trades = _get_losing_trades_stats(engines.db, where_clause, params)
 
         total_trades = stats["total_trades"] or 0
         win_count = winning_trades["win_count"] or 0
-        losing_trades["loss_count"] or 0
 
         # Handle zero division cases
         win_rate = (win_count / total_trades * 100) if total_trades > 0 else 0.0
