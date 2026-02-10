@@ -7,13 +7,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import broker.schwab as schwab_module
-
-# Speed up retries in tests (avoid 7s sleep per error test)
-schwab_module.MAX_RETRIES = 1
-schwab_module.RETRY_BASE_DELAY = 0.0
-
-pytestmark = pytest.mark.asyncio
-
 from broker.schwab import SchwabBroker
 from engine import (
     Order,
@@ -22,6 +15,12 @@ from engine import (
     Side,
     SignalAction,
 )
+
+# Speed up retries in tests (avoid 7s sleep per error test)
+schwab_module.MAX_RETRIES = 1
+schwab_module.RETRY_BASE_DELAY = 0.0
+
+pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture

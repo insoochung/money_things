@@ -105,7 +105,9 @@ class ThesisScorecard:
     def format_telegram(self) -> str:
         """Format scorecard for Telegram display."""
         lines = [f"📊 **{self.title}**"]
-        lines.append(f"Conviction: {int(self.conviction)}% | Age: {self.age_days}d | Status: {self.status}")
+        lines.append(
+            f"Conviction: {int(self.conviction)}% | Age: {self.age_days}d | Status: {self.status}"
+        )
         lines.append("")
 
         for sr in self.symbol_returns:

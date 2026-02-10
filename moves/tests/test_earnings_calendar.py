@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, date, timedelta
+from datetime import date, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest

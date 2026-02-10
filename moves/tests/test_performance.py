@@ -30,7 +30,8 @@ def perf_db(seeded_db: Database) -> Database:
         daily_ret = random.gauss(0.04, 1.2)  # slight positive bias
         value *= 1 + daily_ret / 100
         conn.execute(
-            """INSERT INTO portfolio_value (date, total_value, cash, cost_basis, daily_return_pct, user_id)
+            """INSERT INTO portfolio_value
+               (date, total_value, cash, cost_basis, daily_return_pct, user_id)
                VALUES (date('now', ? || ' days'), ?, 30000, 80000, ?, 1)""",
             (str(-89 + i), round(value, 2), round(daily_ret, 4)),
         )
