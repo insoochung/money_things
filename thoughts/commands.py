@@ -513,8 +513,6 @@ def _add_earnings_section(sections: list[str], all_symbols):
         from datetime import date as date_type
         from datetime import timedelta
 
-        import yfinance as yf
-
         today = date_type.today()
         week_out = today + timedelta(days=7)
         earnings_items: list[str] = []

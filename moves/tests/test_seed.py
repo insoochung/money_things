@@ -157,7 +157,7 @@ def test_seed_kill_switch(db: Database) -> None:
 
 
 def test_seed_theses(db: Database) -> None:
-    """Verify thesis seeding from money_journal research files (conditional on directory existence)."""
+    """Verify thesis seeding from money_journal research files (conditional)."""
     journal_research = Path.home() / "workspace" / "money_journal" / "research"
     if not journal_research.exists():
         return
