@@ -974,3 +974,19 @@ tr.overlap { background: rgba(47,128,237,.06); }
 .btn-add { margin-bottom: 12px; }
 .btn-sm { padding: 2px 8px; font-size: 0.8rem; cursor: pointer; }
 .btn-del { background: var(--red, #e03e3e); color: #fff; border: none; border-radius: 3px; }
+
+/* Principle inline editing */
+.pd-edit { margin-bottom: 1rem; }
+.pd-edit textarea, .pd-edit input, .pd-edit select {
+  width: 100%; padding: 6px 8px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--bg); color: var(--text);
+  font: inherit; font-size: .85rem;
+}
+.pd-edit textarea { resize: vertical; }
+.pd-edit label { display: block; font-size: .75rem; color: var(--muted); margin-top: .5rem; }
+.pd-edit-row { display: flex; gap: 1rem; align-items: end; }
+.pd-edit-row label { flex: 1; }
+.pd-edit-row input[type="number"] { width: 80px; }
+.pd-edit-row input[type="checkbox"] { width: auto; }
+.pd-edit-actions { display: flex; gap: .5rem; margin-top: .75rem; }
+.btn-danger { background: var(--danger, #e03e3e); color: #fff; border: none; border-radius: var(--radius); padding: 6px 14px; cursor: pointer; font-size: .8rem; }

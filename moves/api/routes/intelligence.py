@@ -731,3 +731,51 @@ async def get_what_if_summary(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get what-if summary: {str(e)}",
         )
+
+
+class UpdatePrincipleRequest(BaseModel):
+    text: str | None = None
+    category: str | None = None
+    weight: float | None = None
+    active: bool | None = None
+
+
+@router.patch("/principles/{principle_id}")
+async def update_principle(
+    principle_id: int,
+    body: UpdatePrincipleRequest,
+    engines: EngineContainer = Depends(get_engines),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Update a principle's text, category, weight, or active status."""
+    try:
+        from engine.principles import PrinciplesEngine
+
+        pe = PrinciplesEngine(engines.db)
+        updated = pe.update_principle(principle_id, **body.model_dump(exclude_none=True))
+        if not updated:
+            raise HTTPException(status_code=404, detail="Principle not found or no changes")
+        return {"status": "updated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to update principle: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/principles/{principle_id}")
+async def delete_principle(
+    principle_id: int,
+    engines: EngineContainer = Depends(get_engines),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Delete a principle."""
+    try:
+        from engine.principles import PrinciplesEngine
+
+        pe = PrinciplesEngine(engines.db)
+        pe.delete_principle(principle_id)
+        return {"status": "deleted"}
+    except Exception as e:
+        logger.error("Failed to delete principle: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))

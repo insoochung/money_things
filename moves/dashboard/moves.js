@@ -1069,7 +1069,7 @@
             pNarrative = `Applied to ${totalApps} trades, ${inv} lost money vs ${val} wins. Consider reviewing whether this still holds.`;
           }
 
-          return `<div class="principle-card" onclick="this.classList.toggle('open')">
+          return `<div class="principle-card" data-pid="${p.id}" onclick="this.classList.toggle('open')">
             <div class="principle-header">
               <span class="principle-text">${p.text || p.principle}</span>
               ${cat ? `<span class="category-badge cat-${cat}">${cat}</span>` : ''}
@@ -1079,8 +1079,23 @@
               </div>
               ${origin ? `<span class="origin-badge">${origin}</span>` : ''}
             </div>
-            <div class="principle-details">
+            <div class="principle-details" onclick="event.stopPropagation()">
               <p class="principle-narrative">${pNarrative}</p>
+              <div class="pd-edit">
+                <label>Text</label>
+                <textarea class="pe-text" rows="2">${p.text || p.principle || ''}</textarea>
+                <div class="pd-edit-row">
+                  <label>Category<select class="pe-category">
+                    ${['domain','conviction','risk','timing','sizing'].map(c => `<option value="${c}" ${cat===c?'selected':''}>${c}</option>`).join('')}
+                  </select></label>
+                  <label>Weight<input type="number" class="pe-weight" value="${weight}" min="0" max="1" step="0.01"></label>
+                  <label>Active<input type="checkbox" class="pe-active" ${p.active !== false ? 'checked' : ''}></label>
+                </div>
+                <div class="pd-edit-actions">
+                  <button class="btn-save" onclick="savePrinciple(${p.id}, this)">Save</button>
+                  <button class="btn-danger" onclick="deletePrinciple(${p.id})">Delete</button>
+                </div>
+              </div>
               <div class="pd-grid">
                 <div class="pd-item"><label>Validated</label><span>${val}</span></div>
                 <div class="pd-item"><label>Invalidated</label><span>${inv}</span></div>
@@ -1130,6 +1145,27 @@
       await apiWrite('/api/fund/principles', 'POST', { text, category, origin: 'pattern_discovery' });
       loadPrinciples();
     } catch (e) { console.error('Failed to add principle:', e); }
+  };
+
+  window.savePrinciple = async function(id, btn) {
+    const card = btn.closest('.principle-card');
+    try {
+      await apiWrite(`/api/fund/principles/${id}`, 'PATCH', {
+        text: card.querySelector('.pe-text').value,
+        category: card.querySelector('.pe-category').value,
+        weight: parseFloat(card.querySelector('.pe-weight').value),
+        active: card.querySelector('.pe-active').checked,
+      });
+      loadPrinciples();
+    } catch (e) { alert('Save failed: ' + e.message); }
+  };
+
+  window.deletePrinciple = async function(id) {
+    if (!confirm('Delete this principle?')) return;
+    try {
+      await apiWrite(`/api/fund/principles/${id}`, 'DELETE');
+      loadPrinciples();
+    } catch (e) { alert('Delete failed: ' + e.message); }
   };
 
   // ── 14b. What-If ──

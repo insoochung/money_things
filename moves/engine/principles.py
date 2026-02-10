@@ -533,3 +533,25 @@ def _audit(db: Database, action: str, entity_type: str, entity_id: int | None) -
         (ActorType.ENGINE.value, action, entity_type, entity_id),
     )
     db.connect().commit()
+
+    def update_principle(self, principle_id: int, **fields: str | float | bool) -> bool:
+        """Update a principle's fields."""
+        allowed = {"text", "category", "weight", "active"}
+        updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+        if not updates:
+            return False
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        self.db.execute(
+            f"UPDATE principles SET {set_clause} WHERE id = ?",  # noqa: S608
+            (*updates.values(), principle_id),
+        )
+        self.db.connect().commit()
+        _audit(self.db, "principle_updated", "principle", principle_id)
+        return True
+
+    def delete_principle(self, principle_id: int) -> bool:
+        """Delete a principle by ID."""
+        self.db.execute("DELETE FROM principles WHERE id = ?", (principle_id,))
+        self.db.connect().commit()
+        _audit(self.db, "principle_deleted", "principle", principle_id)
+        return True
