@@ -271,6 +271,8 @@ async def lifespan(app: FastAPI) -> Any:
                     mode=settings.mode,
                 )
                 await telegram_bot.start()
+                from api.deps import set_bot
+                set_bot(telegram_bot)
                 logger.info("Telegram bot started")
             except Exception:
                 logger.exception("Failed to start Telegram bot — continuing without it")

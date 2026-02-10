@@ -174,8 +174,59 @@ def job_signal_scan(
                 sig.get("symbol", "?"),
                 sig.get("confidence", 0),
             )
+        if signals:
+            _notify_signals_telegram(signals, signal_generator.db)
     except Exception:
         logger.exception("signal_scan: failed")
+
+
+def _notify_signals_telegram(signals: list[dict], db: Database) -> None:
+    """Send new signal notifications to Telegram with approve/reject buttons."""
+    import asyncio
+
+    from api.deps import get_bot
+
+    bot = get_bot()
+    if not bot:
+        logger.warning("signal_scan: no Telegram bot — skipping notifications")
+        return
+
+    for sig in signals:
+        signal_id = sig.get("signal_id") or sig.get("id")
+        if not signal_id:
+            continue
+        try:
+            row = db.fetchone("SELECT * FROM signals WHERE id = ?", (signal_id,))
+            if not row:
+                continue
+
+            from engine import Signal, SignalAction, SignalSource, SignalStatus
+
+            signal_obj = Signal(
+                id=row["id"],
+                action=SignalAction(row["action"]),
+                symbol=row["symbol"],
+                thesis_id=row["thesis_id"],
+                confidence=row["confidence"],
+                source=SignalSource(row["source"]),
+                reasoning=row["reasoning"] or "",
+                size_pct=row["size_pct"],
+                status=SignalStatus(row["status"]),
+                created_at=row["created_at"] or "",
+            )
+
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.ensure_future(bot.send_signal(signal_obj))
+            else:
+                loop.run_until_complete(bot.send_signal(signal_obj))
+
+            logger.info(
+                "signal_scan: notified Telegram for %s %s",
+                row["action"], row["symbol"],
+            )
+        except Exception:
+            logger.exception("signal_scan: Telegram notify failed for signal %s", signal_id)
 
 
 def job_news_scan(

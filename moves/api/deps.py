@@ -106,3 +106,19 @@ def clear_engines() -> None:
     Called by the application lifespan manager during cleanup.
     """
     _engines.pop("container", None)
+
+
+# ── Telegram bot singleton ──
+
+_telegram_bot: Any = None
+
+
+def set_bot(bot: Any) -> None:
+    """Store the Telegram bot instance at startup."""
+    global _telegram_bot  # noqa: PLW0603
+    _telegram_bot = bot
+
+
+def get_bot() -> Any:
+    """Return the Telegram bot instance, or None."""
+    return _telegram_bot
