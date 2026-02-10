@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from typing import Any
 
 # Add moves to path to import Database
 sys.path.append(str(Path(__file__).parent.parent.parent / "moves"))
@@ -27,18 +26,18 @@ MOVES_MOCK_DB_PATH = Path(__file__).parent.parent.parent / "moves" / "data" / "m
 
 class ThoughtsDatabase:
     """Database manager for thoughts module using proper Database class."""
-    
+
     def __init__(self) -> None:
         self.thoughts_db = Database(THOUGHTS_DB_PATH)
-        
+
         # Try live moves DB first, fall back to mock
         if MOVES_DB_PATH.exists():
             self.moves_db = Database(MOVES_DB_PATH)
         else:
             self.moves_db = Database(MOVES_MOCK_DB_PATH)
-            
+
         self._ensure_thoughts_schema()
-    
+
     def _ensure_thoughts_schema(self) -> None:
         """Ensure thoughts database schema exists."""
         schema_sql = """
@@ -92,7 +91,7 @@ class ThoughtsDatabase:
             completed_at TEXT
         );
         """
-        
+
         try:
             with self.thoughts_db.transaction():
                 for statement in schema_sql.strip().split(';'):

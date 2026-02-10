@@ -31,12 +31,12 @@ class ThoughtsBridge:
     """
 
     def __init__(
-        self, 
+        self,
         engine: ThoughtsEngine | None = None,
         moves_db: Database | None = None
     ) -> None:
         self.engine = engine or ThoughtsEngine()
-        
+
         # Set up proper moves DB access - use same DB path as engine
         if moves_db:
             self.moves_db = moves_db
@@ -141,9 +141,11 @@ class ThoughtsBridge:
                     "WHERE id = ?",
                     (conviction, moves_status, thesis_id),
                 )
-                
-            logger.info(f"Updated thesis {thesis_id}: conviction={conviction}, status={moves_status}")
-            
+
+            logger.info(
+                f"Updated thesis {thesis_id}: conviction={conviction}, status={moves_status}"
+            )
+
         except Exception as e:
             logger.error(f"Failed to update thesis {thesis_id}: {e}")
             return False

@@ -456,8 +456,8 @@ def _parse_research_frontmatter(content: str) -> dict:
         return result
     for line in match.group(1).splitlines():
         if ":" in line and not line.strip().startswith("-"):
-            key, val = line.split(":", 1)
-            result[key.strip()] = val.strip()
+            key, value = line.split(":", 1)
+            result[key.strip()] = value.strip()
     return result
 
 

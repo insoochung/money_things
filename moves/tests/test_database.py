@@ -197,7 +197,7 @@ def test_database_empty_query_results(db: Database) -> None:
     # Query non-existent table
     result = db.fetchall("SELECT * FROM accounts WHERE id = 9999")
     assert result == []
-    
+
     # Single result query for non-existent data
     result = db.fetchone("SELECT * FROM accounts WHERE id = 9999")
     assert result is None
@@ -206,7 +206,7 @@ def test_database_empty_query_results(db: Database) -> None:
 def test_database_malformed_sql(db: Database) -> None:
     """Test database handles malformed SQL gracefully."""
     import sqlite3
-    
+
     # Malformed SQL should raise an exception
     with pytest.raises(sqlite3.OperationalError):
         db.execute("INVALID SQL STATEMENT")
@@ -219,7 +219,7 @@ def test_database_null_values(db: Database) -> None:
         "INSERT INTO accounts (name, broker, account_type, paper_trading) VALUES (?, ?, ?, ?)",
         ("test_null", "mock", "test", None)
     )
-    
+
     row = db.fetchone("SELECT * FROM accounts WHERE name = 'test_null'")
     assert row is not None
     assert row["paper_trading"] is None
@@ -229,12 +229,12 @@ def test_database_large_text_values(db: Database) -> None:
     """Test database handles large text values."""
     # Insert a large description
     large_text = "A" * 10000  # 10KB of text
-    
+
     db.execute(
         "INSERT INTO accounts (name, broker, account_type, description) VALUES (?, ?, ?, ?)",
         ("test_large", "mock", "test", large_text)
     )
-    
+
     row = db.fetchone("SELECT * FROM accounts WHERE name = 'test_large'")
     assert row is not None
     assert row["description"] == large_text
@@ -244,7 +244,7 @@ def test_database_boundary_integer_values(db: Database) -> None:
     """Test database handles boundary integer values."""
     # Use signals table for integer boundary testing
     import sys
-    
+
     # Insert with boundary values
     db.execute(
         """
@@ -253,7 +253,7 @@ def test_database_boundary_integer_values(db: Database) -> None:
         """,
         (1, "BUY", "TEST", "BUY", sys.maxsize, 0.0, 1.0)
     )
-    
+
     row = db.fetchone("SELECT * FROM signals WHERE symbol = 'TEST'")
     assert row is not None
     assert row["quantity"] == sys.maxsize
@@ -264,15 +264,17 @@ def test_database_concurrent_transactions(db: Database) -> None:
     # First transaction succeeds
     with db.transaction() as conn:
         conn.execute(
-            "INSERT INTO accounts (name, broker, account_type) VALUES ('concurrent1', 'mock', 'test')"
+            "INSERT INTO accounts (name, broker, account_type) VALUES (?, ?, ?)",
+            ("concurrent1", "mock", "test")
         )
-    
+
     # Second overlapping transaction also succeeds
     with db.transaction() as conn:
         conn.execute(
-            "INSERT INTO accounts (name, broker, account_type) VALUES ('concurrent2', 'mock', 'test')"
+            "INSERT INTO accounts (name, broker, account_type) VALUES (?, ?, ?)",
+            ("concurrent2", "mock", "test")
         )
-    
+
     # Both should exist
     rows = db.fetchall("SELECT * FROM accounts WHERE name LIKE 'concurrent%'")
     assert len(rows) == 2
@@ -282,12 +284,12 @@ def test_database_special_characters(db: Database) -> None:
     """Test database handles special characters and encoding."""
     special_name = "test'\"\\;--/*"  # SQL injection attempts
     unicode_text = "测试 🚀 émojis"  # Unicode and emojis
-    
+
     db.execute(
         "INSERT INTO accounts (name, broker, account_type, description) VALUES (?, ?, ?, ?)",
         (special_name, "mock", "test", unicode_text)
     )
-    
+
     row = db.fetchone("SELECT * FROM accounts WHERE name = ?", (special_name,))
     assert row is not None
     assert row["name"] == special_name
