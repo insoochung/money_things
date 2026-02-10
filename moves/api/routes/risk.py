@@ -250,7 +250,30 @@ async def get_risk_metrics(
             liquidity_score=85.0,  # Placeholder
         )
 
+        # Calculate specific metrics that JavaScript expects
+        nav = exposure.get("nav", 100000.0)  # Get NAV from exposure if available
+
+        # Worst-case loss (estimate based on max position concentration and market stress)
+        max_pos_pct = exposure.get("max_position_pct", 0.0)
+        worst_case_loss = -nav * max_pos_pct * 0.8  # 80% loss on largest position
+
+        # Crash impact (-20% market scenario)
+        gross_exp_pct = exposure.get("gross_exposure", 0.0)
+        crash_impact = -nav * gross_exp_pct * 0.20  # 20% loss on gross exposure
+
+        # Concentration risk (as percentage)
+        concentration = max_pos_pct * 100
+
+        # VaR 95% (estimate in dollar terms)
+        var_95 = -nav * risk_metrics.var_95_daily_pct / 100
+
+        # Return simplified structure matching JavaScript expectations
         return {
+            "worst_case_loss": worst_case_loss,
+            "crash_impact": crash_impact,
+            "concentration": concentration,
+            "var_95": var_95,
+            # Include nested structure for advanced users/future features
             "metrics": risk_metrics.dict(),
             "limits": [limit.dict() for limit in limits_status],
             "alerts": [

@@ -31,6 +31,8 @@ class FundStatus(BaseModel):
         cash_pct: Cash as percentage of NAV.
         positions_count: Number of open positions.
         last_updated: Timestamp of last price update.
+        sharpe_ratio: Sharpe ratio (risk-adjusted return).
+        mode: Operating mode (mock/live).
     """
 
     nav: float = Field(..., description="Net asset value")
@@ -43,6 +45,8 @@ class FundStatus(BaseModel):
     cash_pct: float = Field(..., description="Cash percentage of NAV")
     positions_count: int = Field(..., description="Open positions count")
     last_updated: str = Field(..., description="Last update timestamp")
+    sharpe_ratio: float = Field(..., description="Sharpe ratio (risk-adjusted return)")
+    mode: str = Field(..., description="Operating mode (mock/live)")
 
 
 class Position(BaseModel):
@@ -61,6 +65,9 @@ class Position(BaseModel):
         weight_pct: Position weight as percentage of NAV.
         thesis_id: Associated thesis ID (if any).
         thesis_title: Associated thesis title (if any).
+        stop: Stop loss price (if set).
+        target: Target price (if set).
+        review_days: Days until position review (if set).
     """
 
     symbol: str = Field(..., description="Stock symbol")
@@ -76,6 +83,9 @@ class Position(BaseModel):
     weight_pct: float = Field(..., description="Portfolio weight %")
     thesis_id: int | None = Field(None, description="Linked thesis ID")
     thesis_title: str | None = Field(None, description="Linked thesis title")
+    stop: float | None = Field(None, description="Stop loss price")
+    target: float | None = Field(None, description="Target price")
+    review_days: int | None = Field(None, description="Days until review")
 
 
 class PositionDetail(Position):
@@ -97,6 +107,7 @@ class ExposureBreakdown(BaseModel):
         net_exposure: Net exposure as percentage of NAV.
         long_exposure: Long exposure as percentage of NAV.
         short_exposure: Short exposure as percentage of NAV.
+        cash_pct: Cash as percentage of NAV.
         by_sector: Exposure breakdown by sector.
         by_thesis: Exposure breakdown by thesis.
         concentration_risk: Largest position as percentage of NAV.
@@ -106,6 +117,7 @@ class ExposureBreakdown(BaseModel):
     net_exposure: float = Field(..., description="Net exposure %")
     long_exposure: float = Field(..., description="Long exposure %")
     short_exposure: float = Field(..., description="Short exposure %")
+    cash_pct: float = Field(..., description="Cash as % of NAV")
     by_sector: dict[str, float] = Field(..., description="Sector breakdown")
     by_thesis: dict[str, float] = Field(..., description="Thesis breakdown")
     concentration_risk: float = Field(..., description="Largest position %")
@@ -207,6 +219,20 @@ async def get_fund_status(
         # Position count
         positions_count = len(positions)
 
+        # Calculate Sharpe ratio (simplified - assumes 4.5% risk-free rate)
+        # This is a simplified calculation for dashboard display
+        risk_free_rate = 4.5
+        if total_return_pct > 0 and day_return_pct != 0:
+            # Rough approximation using daily volatility
+            sharpe_ratio = (total_return_pct - risk_free_rate) / max(abs(day_return_pct * 16), 1.0)
+        else:
+            sharpe_ratio = 0.0
+
+        # Get mode from settings
+        from config.settings import get_settings
+        settings = get_settings()
+        mode = settings.mode.value if settings.mode else "mock"
+
         return FundStatus(
             nav=nav,
             total_return_pct=total_return_pct,
@@ -218,6 +244,8 @@ async def get_fund_status(
             cash_pct=(cash / nav * 100) if nav > 0 else 0.0,
             positions_count=positions_count,
             last_updated=datetime.now(UTC).isoformat() + "Z",
+            sharpe_ratio=sharpe_ratio,
+            mode=mode,
         )
 
     except Exception as e:
@@ -284,6 +312,38 @@ async def get_positions(
                 unrealized_pnl_pct = (unrealized_pnl / cost_basis * 100) if cost_basis > 0 else 0.0
                 weight_pct = (abs(market_value) / nav * 100) if nav > 0 else 0.0
 
+                # Get stop/target from position signals or risk management (simplified)
+                stop_price = None
+                target_price = None
+                review_days = None
+
+                # Try to get stop/target from active signals for this position
+                try:
+                    signal = engines.db.fetchone("""
+                        SELECT stop_price, target_price
+                        FROM signals
+                        WHERE symbol = ? AND status = 'approved'
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    """, (position["symbol"],))
+                    if signal:
+                        stop_price = signal["stop_price"]
+                        target_price = signal["target_price"]
+                except Exception:
+                    pass
+
+                # Calculate review days based on thesis or default (simplified)
+                if position["thesis_id"]:
+                    try:
+                        thesis = engines.db.fetchone("""
+                            SELECT horizon FROM theses WHERE id = ?
+                        """, (position["thesis_id"],))
+                        if thesis and thesis["horizon"]:
+                            horizon_map = {"1w": 7, "1m": 30, "3m": 90, "6m": 180, "1y": 365}
+                            review_days = horizon_map.get(thesis["horizon"], 90)
+                    except Exception:
+                        pass
+
                 result.append(
                     Position(
                         symbol=position["symbol"],
@@ -299,6 +359,9 @@ async def get_positions(
                         weight_pct=weight_pct,
                         thesis_id=position["thesis_id"],
                         thesis_title=position["thesis_title"],
+                        stop=stop_price,
+                        target=target_price,
+                        review_days=review_days,
                     )
                 )
 
@@ -404,8 +467,39 @@ async def get_position_detail(
             acquisition_dates.append(lot["acquired_date"])
             holding_periods.append(lot["holding_period"] or 0)
 
+        # Get stop/target for detail view (same logic as positions)
+        stop_price = None
+        target_price = None
+        review_days = None
+
+        try:
+            signal = engines.db.fetchone("""
+                SELECT stop_price, target_price
+                FROM signals
+                WHERE symbol = ? AND status = 'approved'
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (ticker,))
+            if signal:
+                stop_price = signal["stop_price"]
+                target_price = signal["target_price"]
+        except Exception:
+            pass
+
+        if position["thesis_id"]:
+            try:
+                thesis = engines.db.fetchone("""
+                    SELECT horizon FROM theses WHERE id = ?
+                """, (position["thesis_id"],))
+                if thesis and thesis["horizon"]:
+                    horizon_map = {"1w": 7, "1m": 30, "3m": 90, "6m": 180, "1y": 365}
+                    review_days = horizon_map.get(thesis["horizon"], 90)
+            except Exception:
+                pass
+
         return PositionDetail(
             symbol=position["symbol"],
+            ticker=position["symbol"],
             side=position["side"],
             shares=shares,
             avg_cost=avg_cost,
@@ -417,6 +511,9 @@ async def get_position_detail(
             weight_pct=weight_pct,
             thesis_id=position["thesis_id"],
             thesis_title=position["thesis_title"],
+            stop=stop_price,
+            target=target_price,
+            review_days=review_days,
             lots=lots_data,
             acquisition_dates=acquisition_dates,
             holding_periods=holding_periods,
@@ -509,6 +606,10 @@ async def get_exposure(
         short_exposure_pct = short_exposure / nav * 100 if nav > 0 else 0.0
         concentration_risk = max_position_value / nav * 100 if nav > 0 else 0.0
 
+        # Calculate cash percentage
+        cash = portfolio_value["cash"] if portfolio_value else 0.0
+        cash_pct = (cash / nav * 100) if nav > 0 else 0.0
+
         # Convert thesis and sector exposures to percentages
         by_thesis_pct = {k: v / nav * 100 for k, v in by_thesis.items()} if nav > 0 else {}
         by_sector_pct = {k: v / nav * 100 for k, v in by_sector.items()} if nav > 0 else {}
@@ -518,6 +619,7 @@ async def get_exposure(
             net_exposure=net_exposure,
             long_exposure=long_exposure_pct,
             short_exposure=short_exposure_pct,
+            cash_pct=cash_pct,
             by_sector=by_sector_pct,
             by_thesis=by_thesis_pct,
             concentration_risk=concentration_risk,
