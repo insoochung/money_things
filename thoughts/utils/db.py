@@ -37,6 +37,7 @@ The database file is created lazily by ``init_db()`` and its parent directory
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -45,6 +46,8 @@ from pathlib import Path
 from typing import Any
 
 import yfinance as yf
+
+logger = logging.getLogger(__name__)
 
 # Database location
 DB_PATH = Path(__file__).parent.parent / "data" / "journal.db"
@@ -498,7 +501,7 @@ def backfill_prices(
         return len(prices)
 
     except Exception as e:
-        print(f"Error backfilling {symbol}: {e}")
+        logger.error(f"Error backfilling {symbol}: {e}")
         return 0
 
 

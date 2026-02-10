@@ -292,29 +292,29 @@ class SignalGenerator:
         Returns:
             Block reason string if blocked, None if clear.
         """
+        # Check thesis-related conditions
+        thesis_block = self._check_thesis_conditions(thesis)
+        if thesis_block:
+            return thesis_block
+
+        # Check market-related conditions
+        market_block = self._check_market_conditions(symbol)
+        if market_block:
+            return market_block
+
+        return None
+
+    def _check_thesis_conditions(self, thesis: Any) -> str | None:
+        """Check thesis-specific blocking conditions."""
         # Conviction gate
         conviction = thesis.conviction if thesis.conviction else 0.0
         if conviction < _MIN_CONVICTION:
-            return (
-                f"conviction {conviction:.0%} < {_MIN_CONVICTION:.0%}"
-            )
+            return f"conviction {conviction:.0%} < {_MIN_CONVICTION:.0%}"
 
         # Thesis age gate
-        if thesis.created_at:
-            try:
-                created = datetime.fromisoformat(
-                    str(thesis.created_at)
-                )
-                if created.tzinfo is None:
-                    created = created.replace(tzinfo=UTC)
-                age = datetime.now(UTC) - created
-                if age < timedelta(days=_MIN_THESIS_AGE_DAYS):
-                    return (
-                        f"thesis age {age.days}d "
-                        f"< {_MIN_THESIS_AGE_DAYS}d minimum"
-                    )
-            except (ValueError, TypeError):
-                pass
+        age_block = self._check_thesis_age(thesis)
+        if age_block:
+            return age_block
 
         # Think sessions gate
         session_count = self._get_think_session_count(thesis.id)
@@ -324,6 +324,30 @@ class SignalGenerator:
                 f"< {_MIN_THINK_SESSIONS} minimum"
             )
 
+        return None
+
+    def _check_thesis_age(self, thesis: Any) -> str | None:
+        """Check if thesis is old enough."""
+        if not thesis.created_at:
+            return None
+
+        try:
+            created = datetime.fromisoformat(str(thesis.created_at))
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=UTC)
+            age = datetime.now(UTC) - created
+            if age < timedelta(days=_MIN_THESIS_AGE_DAYS):
+                return (
+                    f"thesis age {age.days}d "
+                    f"< {_MIN_THESIS_AGE_DAYS}d minimum"
+                )
+        except (ValueError, TypeError):
+            pass
+
+        return None
+
+    def _check_market_conditions(self, symbol: str) -> str | None:
+        """Check market-related blocking conditions."""
         # Earnings calendar block
         if is_earnings_imminent(symbol):
             return f"{symbol} earnings imminent (within 5 days)"
