@@ -1,28 +1,4 @@
-"""Signal generation pipeline: autonomous thesis evaluation and signal creation.
-
-Evaluates active theses against current market data and generates actionable
-trading signals. Uses multi-factor confidence scoring with blocking conditions
-for earnings, trading windows, thesis maturity, and conviction gates.
-
-The confidence scoring pipeline uses six weighted factors:
-    - Thesis conviction (30%)
-    - Watchlist trigger hit (20%)
-    - News sentiment (15%)
-    - Critic assessment (15%)
-    - Calibration / win rate (10%)
-    - Congress alignment (10%)
-
-Blocking conditions (signal is not generated if any are true):
-    - Earnings within 5 days
-    - Trading window blackout (e.g., META for Insoo)
-    - Thesis age < 1 week
-    - Thesis conviction < 70%
-    - Fewer than 2 /think sessions on the thesis
-
-Classes:
-    SignalGenerator: Evaluates theses and generates trading signals.
-    MultiFactorScore: Pydantic model for the multi-factor confidence breakdown.
-"""
+"""Signal generation with multi-factor confidence scoring and blocking conditions."""
 
 from __future__ import annotations
 
@@ -79,22 +55,7 @@ _MIN_THESIS_AGE_DAYS = 7
 
 
 class MultiFactorScore(BaseModel):
-    """Breakdown of the multi-factor confidence scoring.
-
-    Each factor is a normalized 0.0–1.0 score. The weighted_total
-    is the sum of (factor * weight) across all factors.
-
-    Attributes:
-        thesis_conviction: Raw thesis conviction score.
-        watchlist_trigger: 1.0 if a trigger was hit, 0.0 otherwise.
-        news_sentiment: Average news sentiment score for the symbol.
-        critic_assessment: Last critic assessment score (0.0–1.0).
-        calibration: Historical win rate for this signal source.
-        congress_alignment: Congress trade alignment score.
-        weighted_total: Final weighted confidence score.
-        blocked: Whether the signal was blocked.
-        block_reason: Reason for blocking, if any.
-    """
+    """Multi-factor confidence scoring breakdown, all factors 0.0-1.0."""
 
     thesis_conviction: float = 0.0
     watchlist_trigger: float = 0.0
@@ -108,20 +69,6 @@ class MultiFactorScore(BaseModel):
 
 
 class SignalGenerator:
-    """Generates trading signals by evaluating theses against market data.
-
-    Scans all active/non-archived theses, checks each symbol for price
-    movements and portfolio state, then generates BUY or SELL signals with
-    multi-factor confidence scoring and risk checks.
-
-    Attributes:
-        db: Database instance.
-        signal_engine: For creating and listing signals.
-        thesis_engine: For listing theses.
-        risk_manager: For pre-trade risk checks and NAV.
-        pricing: The engine.pricing module for fetching prices.
-        user_id: User ID for risk checks (default 1).
-    """
 
     def __init__(
         self,
@@ -141,18 +88,7 @@ class SignalGenerator:
         self._politician_scorer: PoliticianScorer | None = None
 
     def run_scan(self) -> list[dict]:
-        """Main scan loop. Called by scheduler.
-
-        For each non-archived thesis:
-        1. Check blocking conditions (earnings, windows, maturity)
-        2. Evaluate thesis symbols for potential signals
-        3. Score confidence using multi-factor pipeline
-        4. Run pre-trade risk checks
-        5. Create signals that pass all checks
-
-        Returns:
-            List of dicts describing generated signals.
-        """
+        """Scan active theses and generate trading signals."""
         logger.info("signal_scan: starting scan")
         generated: list[dict] = []
 
@@ -181,14 +117,6 @@ class SignalGenerator:
         return generated
 
     def _evaluate_thesis_symbols(self, thesis: Any) -> list[dict]:
-        """Evaluate each symbol in a thesis for potential signals.
-
-        Args:
-            thesis: Thesis model from ThesisEngine.
-
-        Returns:
-            List of signal result dicts.
-        """
         if not thesis.symbols:
             return []
 
