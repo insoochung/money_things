@@ -719,17 +719,17 @@ class SignalGenerator:
 
     def _check_daily_movement(self, price_data: dict) -> dict | None:
         """Check if daily price movement exceeds threshold."""
-        change_percentage = price_data.get("change_percent")
-        if change_percentage is None:
+        change_percent = price_data.get("change_percent")
+        if change_percent is None:
             return None
 
-        abs_change = abs(change_percentage)
+        abs_change = abs(change_percent)
         if abs_change >= _DAILY_MOVE_THRESHOLD:
             return {
                 "type": "daily_move",
                 "price": price_data["price"],
-                "change_percent": change_percentage,
-                "direction": "up" if change_percentage > 0 else "down",
+                "change_percent": change_percent,
+                "direction": "up" if change_percent > 0 else "down",
             }
 
         return None

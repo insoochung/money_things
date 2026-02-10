@@ -8,9 +8,15 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
+# Add moves to path to import Database class
+sys.path.append(str(Path(__file__).parent.parent / "moves"))
+
+from db.database import Database
 from engine import ThoughtsEngine
 
 logger = logging.getLogger(__name__)
@@ -21,10 +27,22 @@ class ThoughtsBridge:
 
     Args:
         engine: ThoughtsEngine instance (provides DB connections).
+        moves_db: Database instance for moves DB (optional, will be created if not provided).
     """
 
-    def __init__(self, engine: ThoughtsEngine | None = None) -> None:
+    def __init__(
+        self, 
+        engine: ThoughtsEngine | None = None,
+        moves_db: Database | None = None
+    ) -> None:
         self.engine = engine or ThoughtsEngine()
+        
+        # Set up proper moves DB access - use same DB path as engine
+        if moves_db:
+            self.moves_db = moves_db
+        else:
+            # Create Database instance pointing to the same path as the engine
+            self.moves_db = Database(self.engine.moves_db)
 
     # ── Read from Moves ───────────────────────────────────────
 
@@ -106,27 +124,29 @@ class ThoughtsBridge:
         Returns:
             True if the update was applied.
         """
-        from engine import _connect
+        try:
+            # Map thoughts status to moves status
+            status_map = {
+                "strengthening": "active",
+                "weakening": "active",
+                "confirmed": "validated",
+                "invalidated": "invalidated",
+            }
+            moves_status = status_map.get(status, "active")
 
-        if not self.engine.moves_db.exists():
+            # Use proper Database class for the update
+            with self.moves_db.transaction():
+                self.moves_db.execute(
+                    "UPDATE theses SET conviction = ?, status = ?, updated_at = datetime('now') "
+                    "WHERE id = ?",
+                    (conviction, moves_status, thesis_id),
+                )
+                
+            logger.info(f"Updated thesis {thesis_id}: conviction={conviction}, status={moves_status}")
+            
+        except Exception as e:
+            logger.error(f"Failed to update thesis {thesis_id}: {e}")
             return False
-
-        # Map thoughts status to moves status
-        status_map = {
-            "strengthening": "active",
-            "weakening": "active",
-            "confirmed": "validated",
-            "invalidated": "invalidated",
-        }
-        moves_status = status_map.get(status, "active")
-
-        with _connect(self.engine.moves_db) as conn:
-            conn.execute(
-                "UPDATE theses SET conviction = ?, status = ?, updated_at = datetime('now') "
-                "WHERE id = ?",
-                (conviction, moves_status, thesis_id),
-            )
-            conn.commit()
 
         # Also log as a journal entry in thoughts DB
         self.engine.create_journal(

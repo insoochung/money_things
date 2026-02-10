@@ -47,7 +47,8 @@ class TestPeriodStartDate:
 class TestDailyReturns:
     """Tests for daily_returns calculation."""
 
-    def test_simple(self) -> None:
+    def test_daily_returns_basic_calculation(self) -> None:
+        """Test daily returns calculation with positive and negative returns."""
         vals = [100.0, 110.0, 99.0]
         rets = daily_returns(vals)
         np.testing.assert_allclose(rets, [10.0, -10.0], atol=0.01)
