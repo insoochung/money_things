@@ -107,6 +107,123 @@ class TradesSummary(BaseModel):
     worst_trade: float = Field(..., description="Worst trade P/L")
 
 
+def _build_list_trades_where_clause(
+    symbol: str | None,
+    action: str | None,
+    thesis_id: int | None,
+) -> tuple[str, list[str]]:
+    """Build WHERE clause for list trades query with filters.
+
+    Args:
+        symbol: Optional symbol filter.
+        action: Optional action filter.
+        thesis_id: Optional thesis filter.
+
+    Returns:
+        Tuple of (where_clause, params_list).
+    """
+    where_conditions = []
+    params = []
+
+    if symbol:
+        where_conditions.append("t.symbol = ?")
+        params.append(symbol.upper())
+
+    if action:
+        where_conditions.append("t.action = ?")
+        params.append(action.upper())
+
+    if thesis_id:
+        where_conditions.append("th.id = ?")
+        params.append(thesis_id)
+
+    where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
+    return where_clause, params
+
+
+def _fetch_trades_with_enriched_data(
+    db: Any,
+    where_clause: str,
+    params: list,
+    limit: int,
+    offset: int,
+) -> list[dict]:
+    """Fetch trades from database with joined signal and thesis data.
+
+    Args:
+        db: Database connection.
+        where_clause: SQL WHERE clause.
+        params: Query parameters (without limit/offset).
+        limit: Maximum number of trades to return.
+        offset: Number of trades to skip.
+
+    Returns:
+        List of trade dicts with enriched data.
+    """
+    query_params = params + [limit, offset]
+    return db.fetchall(
+        f"""
+        SELECT
+            t.*,
+            s.confidence as signal_confidence,
+            s.source as signal_source,
+            s.thesis_id,
+            th.title as thesis_title,
+            l.holding_period,
+            CASE
+                WHEN l.holding_period IS NOT NULL AND l.holding_period >= 365
+                THEN 'long-term'
+                WHEN l.holding_period IS NOT NULL AND l.holding_period < 365
+                THEN 'short-term'
+                ELSE NULL
+            END as tax_impact
+        FROM trades t
+        LEFT JOIN signals s ON t.signal_id = s.id
+        LEFT JOIN theses th ON s.thesis_id = th.id
+        LEFT JOIN lots l ON t.lot_id = l.id
+        {where_clause}
+        ORDER BY t.timestamp DESC
+        LIMIT ? OFFSET ?
+    """,
+        query_params,
+    )
+
+
+def _convert_trade_rows_to_models(trade_rows: list[dict]) -> list[Trade]:
+    """Convert database trade rows to Trade model objects.
+
+    Args:
+        trade_rows: List of trade dictionaries from database.
+
+    Returns:
+        List of Trade model objects.
+    """
+    return [
+        Trade(
+            id=trade["id"],
+            signal_id=trade["signal_id"],
+            symbol=trade["symbol"],
+            action=trade["action"],
+            shares=trade["shares"],
+            price=trade["price"],
+            total_value=trade["total_value"],
+            fees=trade["fees"] or 0.0,
+            broker=trade["broker"],
+            account_id=trade["account_id"],
+            realized_pnl=trade["realized_pnl"],
+            timestamp=trade["timestamp"],
+            thesis_id=trade["thesis_id"],
+            thesis_title=trade["thesis_title"],
+            signal_confidence=trade["signal_confidence"],
+            signal_source=trade["signal_source"],
+            lot_id=trade["lot_id"],
+            holding_period=trade["holding_period"],
+            tax_impact=trade["tax_impact"],
+        )
+        for trade in trade_rows
+    ]
+
+
 @router.get("/trades", response_model=list[Trade])
 async def list_trades(
     symbol: str | None = Query(None, description="Filter by symbol"),
@@ -134,82 +251,11 @@ async def list_trades(
         List of Trade models with execution details.
     """
     try:
-        # Build WHERE clause based on filters
-        where_conditions = []
-        params = []
-
-        if symbol:
-            where_conditions.append("t.symbol = ?")
-            params.append(symbol.upper())
-
-        if action:
-            where_conditions.append("t.action = ?")
-            params.append(action.upper())
-
-        if thesis_id:
-            where_conditions.append("th.id = ?")
-            params.append(thesis_id)
-
-        where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
-
-        # Add limit and offset to params
-        params.extend([limit, offset])
-
-        # Query trades with joined signal and thesis data
-        trades = engines.db.fetchall(
-            f"""
-            SELECT
-                t.*,
-                s.confidence as signal_confidence,
-                s.source as signal_source,
-                s.thesis_id,
-                th.title as thesis_title,
-                l.holding_period,
-                CASE
-                    WHEN l.holding_period IS NOT NULL AND l.holding_period >= 365
-                    THEN 'long-term'
-                    WHEN l.holding_period IS NOT NULL AND l.holding_period < 365
-                    THEN 'short-term'
-                    ELSE NULL
-                END as tax_impact
-            FROM trades t
-            LEFT JOIN signals s ON t.signal_id = s.id
-            LEFT JOIN theses th ON s.thesis_id = th.id
-            LEFT JOIN lots l ON t.lot_id = l.id
-            {where_clause}
-            ORDER BY t.timestamp DESC
-            LIMIT ? OFFSET ?
-        """,
-            params,
+        where_clause, params = _build_list_trades_where_clause(symbol, action, thesis_id)
+        trade_rows = _fetch_trades_with_enriched_data(
+            engines.db, where_clause, params, limit, offset
         )
-
-        result = []
-        for trade in trades:
-            result.append(
-                Trade(
-                    id=trade["id"],
-                    signal_id=trade["signal_id"],
-                    symbol=trade["symbol"],
-                    action=trade["action"],
-                    shares=trade["shares"],
-                    price=trade["price"],
-                    total_value=trade["total_value"],
-                    fees=trade["fees"] or 0.0,
-                    broker=trade["broker"],
-                    account_id=trade["account_id"],
-                    realized_pnl=trade["realized_pnl"],
-                    timestamp=trade["timestamp"],
-                    thesis_id=trade["thesis_id"],
-                    thesis_title=trade["thesis_title"],
-                    signal_confidence=trade["signal_confidence"],
-                    signal_source=trade["signal_source"],
-                    lot_id=trade["lot_id"],
-                    holding_period=trade["holding_period"],
-                    tax_impact=trade["tax_impact"],
-                )
-            )
-
-        return result
+        return _convert_trade_rows_to_models(trade_rows)
 
     except Exception as e:
         logger.error("Failed to list trades: %s", e)
