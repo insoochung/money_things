@@ -94,12 +94,7 @@ def test_seed_trading_windows(db: Database) -> None:
 
 
 def test_seed_positions(db: Database) -> None:
-    """Verify that seed_positions() creates 2 positions (META and QCOM).
-
-    Requires seed_accounts() to run first (positions reference accounts via
-    foreign key). Checks that META has exactly 230 shares, matching the
-    user's real portfolio from money_journal.
-    """
+    """Verify that seed_positions() creates 2 positions with META having 230 shares."""
     seed_accounts(db)
     count = seed_positions(db)
     assert count == 2
@@ -108,13 +103,7 @@ def test_seed_positions(db: Database) -> None:
 
 
 def test_seed_lots(db: Database) -> None:
-    """Verify that seed_lots() creates 11 lots (8 META + 3 QCOM).
-
-    Requires accounts and positions to exist first. Lots represent individual
-    purchase tranches for FIFO (First-In-First-Out) tax accounting. Each lot
-    tracks shares, cost basis, and acquisition date for holding period and
-    tax impact calculations.
-    """
+    """Verify that seed_lots() creates 11 lots (8 META + 3 QCOM)."""
     seed_accounts(db)
     seed_positions(db)
     count = seed_lots(db)
@@ -127,12 +116,7 @@ def test_seed_lots(db: Database) -> None:
 
 
 def test_seed_principles(db: Database) -> None:
-    """Verify that seed_principles() creates 4 principles from the trading journal.
-
-    Checks a specific principle ('Domain expertise creates durable edge') for
-    correct category='domain' and validated_count=2. Principles are imported
-    from the user's money_journal trading lessons.
-    """
+    """Verify that seed_principles() creates 4 principles with correct attributes."""
     count = seed_principles(db)
     assert count == 4
 
@@ -143,12 +127,7 @@ def test_seed_principles(db: Database) -> None:
 
 
 def test_seed_congress_trades(db: Database) -> None:
-    """Verify that seed_congress_trades() creates 7 Nancy Pelosi trades.
-
-    Congress trades are used as a sentiment signal -- politician trading
-    activity can indicate insider knowledge or sector-level conviction.
-    All 7 seeded trades are attributed to Nancy Pelosi.
-    """
+    """Verify that seed_congress_trades() creates 7 Nancy Pelosi trades."""
     count = seed_congress_trades(db)
     assert count == 7
     pelosi = db.fetchall("SELECT * FROM congress_trades WHERE politician = 'Nancy Pelosi'")
@@ -156,23 +135,13 @@ def test_seed_congress_trades(db: Database) -> None:
 
 
 def test_seed_watchlist_signals(db: Database) -> None:
-    """Verify that seed_watchlist_signals() creates 6 initial signals from the watchlist.
-
-    These signals represent the user's initial watchlist from money_journal,
-    converted into PENDING signals for the money_moves pipeline.
-    """
+    """Verify that seed_watchlist_signals() creates 6 initial signals."""
     count = seed_watchlist_signals(db)
     assert count == 6
 
 
 def test_seed_risk_limits(db: Database) -> None:
-    """Verify that seed_risk_limits() creates 7 risk limit entries with correct values.
-
-    Checks that max_position_pct is seeded as 0.15 (15% of NAV maximum for
-    a single position). The 7 limit types are: max_position_pct, max_sector_pct,
-    max_gross_exposure, net_exposure_min, net_exposure_max, max_drawdown,
-    daily_loss_limit.
-    """
+    """Verify that seed_risk_limits() creates 7 risk limits with max_position_pct=0.15."""
     count = seed_risk_limits(db)
     assert count == 7
     row = db.fetchone("SELECT * FROM risk_limits WHERE limit_type = 'max_position_pct'")
@@ -180,12 +149,7 @@ def test_seed_risk_limits(db: Database) -> None:
 
 
 def test_seed_kill_switch(db: Database) -> None:
-    """Verify that seed_kill_switch() creates exactly 1 kill switch entry as inactive.
-
-    The kill switch starts inactive (active=False) on initial seed, allowing
-    normal trading. It can be activated later via RiskManager.activate_kill_switch()
-    in case of emergency.
-    """
+    """Verify that seed_kill_switch() creates 1 inactive kill switch entry."""
     count = seed_kill_switch(db)
     assert count == 1
     row = db.fetchone("SELECT * FROM kill_switch ORDER BY id DESC LIMIT 1")
@@ -193,23 +157,14 @@ def test_seed_kill_switch(db: Database) -> None:
 
 
 def test_seed_theses(db: Database) -> None:
-    """Verify thesis seeding from money_journal research markdown files.
-
-    This test is conditional -- it checks for the existence of the
-    ~/workspace/money_journal/research/ directory and returns early if it
-    doesn't exist (e.g., on CI or a machine without the journal). When the
-    directory exists, verifies that at least one thesis is created and that
-    each thesis has source_module='money_journal' (indicating provenance).
-    """
-    # This depends on actual files existing in money_journal
+    """Verify thesis seeding from money_journal research files (conditional on directory existence)."""
     journal_research = Path.home() / "workspace" / "money_journal" / "research"
     if not journal_research.exists():
-        return  # Skip if journal not present
+        return
 
     count = seed_theses(db)
     assert count > 0
     theses = db.fetchall("SELECT * FROM theses")
     assert len(theses) == count
-    # Each thesis should have a symbols list
     for t in theses:
         assert t["source_module"] == "money_journal"
