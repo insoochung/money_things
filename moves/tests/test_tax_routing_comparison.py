@@ -1,14 +1,4 @@
-"""Head-to-head comparison of IRA-First vs Smart routing strategies.
-
-Tests 10 realistic scenarios with actual tax math. Uses:
-- 22% marginal rate for ordinary income / short-term cap gains
-- 15% for long-term capital gains
-- 22% for REIT dividends (ordinary income, not qualified)
-- 15% for qualified dividends
-
-Implements both routing strategies as pure functions, calculates tax
-outcomes, and prints a comparison table.
-"""
+"""Tests tax routing strategies comparison."""
 
 from __future__ import annotations
 

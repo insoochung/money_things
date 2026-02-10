@@ -1,23 +1,4 @@
-"""Fund portfolio API endpoints.
-
-This module provides REST API endpoints for retrieving basic portfolio information
-including fund status, positions, exposure, and NAV. These are the core endpoints
-that power the dashboard's summary cards and position tables.
-
-Endpoints:
-    GET /api/fund/status - Overall fund status and NAV
-    GET /api/fund/positions - All open positions with current values
-    GET /api/fund/position/{ticker} - Individual position details
-    GET /api/fund/exposure - Portfolio exposure breakdown
-
-All endpoints return Pydantic models for type safety and automatic OpenAPI
-documentation. The data is sourced from the database and enriched with
-real-time pricing information from the pricing service.
-
-Dependencies:
-    - Requires authenticated session via auth middleware
-    - Uses engine container for database and pricing service access
-"""
+"""Fund portfolio API endpoints."""
 
 from __future__ import annotations
 
@@ -52,16 +33,16 @@ class FundStatus(BaseModel):
         last_updated: Timestamp of last price update.
     """
 
-    nav: float = Field(..., description="Current net asset value")
-    total_return_pct: float = Field(..., description="Total return since inception (%)")
-    day_return_pct: float = Field(..., description="Daily return (%)")
-    day_pnl: float = Field(..., description="Daily P/L in dollars")
-    unrealized_pnl: float = Field(..., description="Total unrealized P/L")
+    nav: float = Field(..., description="Net asset value")
+    total_return_pct: float = Field(..., description="Total return since inception")
+    day_return_pct: float = Field(..., description="Daily return")
+    day_pnl: float = Field(..., description="Daily P/L")
+    unrealized_pnl: float = Field(..., description="Unrealized P/L")
     realized_pnl: float = Field(..., description="YTD realized P/L")
     cash: float = Field(..., description="Available cash")
-    cash_pct: float = Field(..., description="Cash as % of NAV")
-    positions_count: int = Field(..., description="Number of open positions")
-    last_updated: str = Field(..., description="Last update timestamp (ISO 8601)")
+    cash_pct: float = Field(..., description="Cash percentage of NAV")
+    positions_count: int = Field(..., description="Open positions count")
+    last_updated: str = Field(..., description="Last update timestamp")
 
 
 class Position(BaseModel):
@@ -83,18 +64,18 @@ class Position(BaseModel):
     """
 
     symbol: str = Field(..., description="Stock symbol")
-    ticker: str = Field("", description="Stock symbol alias for dashboard compatibility")
-    side: str = Field(..., description="Position side (long/short)")
-    shares: float = Field(..., description="Number of shares")
-    avg_cost: float = Field(..., description="Average cost per share")
-    current_price: float = Field(..., description="Current price per share")
-    market_value: float = Field(..., description="Current market value")
-    unrealized_pnl: float = Field(..., description="Unrealized P/L ($)")
-    unrealized_pnl_pct: float = Field(..., description="Unrealized P/L (%)")
-    day_change_pct: float = Field(..., description="Daily change (%)")
-    weight_pct: float = Field(..., description="Weight as % of NAV")
-    thesis_id: int | None = Field(None, description="Associated thesis ID")
-    thesis_title: str | None = Field(None, description="Associated thesis title")
+    ticker: str = Field("", description="Symbol alias for dashboard")
+    side: str = Field(..., description="long/short")
+    shares: float = Field(..., description="Share count")
+    avg_cost: float = Field(..., description="Average cost basis")
+    current_price: float = Field(..., description="Current price")
+    market_value: float = Field(..., description="Market value")
+    unrealized_pnl: float = Field(..., description="Unrealized P/L")
+    unrealized_pnl_pct: float = Field(..., description="Unrealized P/L %")
+    day_change_pct: float = Field(..., description="Daily change %")
+    weight_pct: float = Field(..., description="Portfolio weight %")
+    thesis_id: int | None = Field(None, description="Linked thesis ID")
+    thesis_title: str | None = Field(None, description="Linked thesis title")
 
 
 class PositionDetail(Position):
@@ -103,9 +84,9 @@ class PositionDetail(Position):
     Inherits all Position fields and adds lot-level detail.
     """
 
-    lots: list[dict[str, Any]] = Field(..., description="Individual lots")
-    acquisition_dates: list[str] = Field(..., description="Lot acquisition dates")
-    holding_periods: list[int] = Field(..., description="Holding periods in days")
+    lots: list[dict[str, Any]] = Field(..., description="Tax lots")
+    acquisition_dates: list[str] = Field(..., description="Acquisition dates")
+    holding_periods: list[int] = Field(..., description="Holding periods")
 
 
 class ExposureBreakdown(BaseModel):
@@ -121,13 +102,13 @@ class ExposureBreakdown(BaseModel):
         concentration_risk: Largest position as percentage of NAV.
     """
 
-    gross_exposure: float = Field(..., description="Gross exposure (% of NAV)")
-    net_exposure: float = Field(..., description="Net exposure (% of NAV)")
-    long_exposure: float = Field(..., description="Long exposure (% of NAV)")
-    short_exposure: float = Field(..., description="Short exposure (% of NAV)")
-    by_sector: dict[str, float] = Field(..., description="Exposure by sector")
-    by_thesis: dict[str, float] = Field(..., description="Exposure by thesis")
-    concentration_risk: float = Field(..., description="Largest position (% of NAV)")
+    gross_exposure: float = Field(..., description="Gross exposure %")
+    net_exposure: float = Field(..., description="Net exposure %")
+    long_exposure: float = Field(..., description="Long exposure %")
+    short_exposure: float = Field(..., description="Short exposure %")
+    by_sector: dict[str, float] = Field(..., description="Sector breakdown")
+    by_thesis: dict[str, float] = Field(..., description="Thesis breakdown")
+    concentration_risk: float = Field(..., description="Largest position %")
 
 
 @router.get("/status", response_model=FundStatus)
