@@ -1,22 +1,4 @@
-"""Intelligence API endpoints.
-
-This module provides REST API endpoints for unique intelligence features including
-Congress trades tracking, principles engine, and what-if analysis. These features
-differentiate money_moves from standard portfolio trackers.
-
-Endpoints:
-    GET /api/fund/congress-trades - Recent Congress member trades and portfolio overlap
-    GET /api/fund/principles - Active learning principles and validation stats
-    GET /api/fund/what-if - What-if analysis for passed signals
-
-These endpoints power the dashboard intelligence sections and provide insights
-for investment decision making.
-
-Dependencies:
-    - Requires authenticated session via auth middleware
-    - Uses PrinciplesEngine for rules management and validation
-    - Uses database for Congress trades and what-if tracking
-"""
+"""Intelligence API endpoints: Congress trades, principles engine, what-if analysis."""
 
 from __future__ import annotations
 
@@ -34,186 +16,91 @@ router = APIRouter()
 
 
 class CongressTrade(BaseModel):
-    """Congress trade response model.
-
-    Attributes:
-        id: Trade record ID.
-        politician: Politician name.
-        symbol: Stock symbol traded.
-        action: Trade action (BUY/SELL).
-        amount_range: Trade amount range.
-        date_filed: Filing date.
-        date_traded: Trade execution date.
-        days_ago: Days since trade was filed.
-        portfolio_overlap: Whether we hold this symbol.
-        our_position_value: Our position value in this symbol (if any).
-        our_position_side: Our position side (long/short, if any).
-        sentiment_signal: Sentiment signal strength (0-100).
-        source_url: Source URL for the filing.
-    """
-
-    id: int = Field(..., description="Trade record ID")
-    politician: str = Field(..., description="Politician name")
-    symbol: str = Field(..., description="Stock symbol")
-    action: str = Field(..., description="Trade action")
-    amount_range: str = Field(..., description="Amount range")
-    date_filed: str = Field(..., description="Filing date")
-    date_traded: str = Field(..., description="Trade date")
-    days_ago: int = Field(..., description="Days since filing")
-    portfolio_overlap: bool = Field(..., description="Portfolio overlap flag")
-    our_position_value: float | None = Field(None, description="Our position value")
-    our_position_side: str | None = Field(None, description="Our position side")
-    sentiment_signal: float = Field(..., description="Sentiment strength (0-100)")
-    source_url: str = Field(..., description="Source URL")
-    politician_score: float | None = Field(None, description="Politician composite score")
-    politician_tier: str | None = Field(None, description="Politician tier")
+    id: int
+    politician: str
+    symbol: str
+    action: str
+    amount_range: str
+    date_filed: str
+    date_traded: str
+    days_ago: int
+    portfolio_overlap: bool
+    our_position_value: float | None = None
+    our_position_side: str | None = None
+    sentiment_signal: float = Field(..., description="0-100")
+    source_url: str
+    politician_score: float | None = None
+    politician_tier: str | None = None
     disclosure_lag_days: int | None = Field(None, description="Days between trade and filing")
-    trade_size_bucket: str | None = Field(None, description="Trade size bucket")
-    committee_relevant: bool = Field(False, description="Committee-relevant trade")
+    trade_size_bucket: str | None = None
+    committee_relevant: bool = False
 
 
 class CongressSummary(BaseModel):
-    """Congress trades summary statistics.
-
-    Attributes:
-        total_trades: Total trades in period.
-        unique_politicians: Number of unique politicians.
-        unique_symbols: Number of unique symbols.
-        overlap_trades: Trades overlapping with our portfolio.
-        net_buying_pressure: Net buying vs selling pressure.
-        top_bought_symbols: Most bought symbols.
-        top_sold_symbols: Most sold symbols.
-        recent_activity_trend: Recent activity trend.
-    """
-
-    total_trades: int = Field(..., description="Total trades")
-    unique_politicians: int = Field(..., description="Unique politicians")
-    unique_symbols: int = Field(..., description="Unique symbols")
-    overlap_trades: int = Field(..., description="Portfolio overlap trades")
-    net_buying_pressure: float = Field(..., description="Net buying pressure")
-    top_bought_symbols: list[dict] = Field(..., description="Top bought symbols")
-    top_sold_symbols: list[dict] = Field(..., description="Top sold symbols")
-    recent_activity_trend: str = Field(..., description="Activity trend")
+    total_trades: int
+    unique_politicians: int
+    unique_symbols: int
+    overlap_trades: int
+    net_buying_pressure: float
+    top_bought_symbols: list[dict]
+    top_sold_symbols: list[dict]
+    recent_activity_trend: str
 
 
 class Principle(BaseModel):
-    """Investment principle response model.
-
-    Attributes:
-        id: Principle ID.
-        text: Principle description.
-        category: Principle category.
-        origin: How the principle was created.
-        validated_count: Number of times validated.
-        invalidated_count: Number of times invalidated.
-        weight: Confidence adjustment weight.
-        validation_rate: Validation success rate.
-        last_applied: Last application timestamp.
-        recent_applications: Recent application examples.
-        active: Whether principle is active.
-        created_at: Creation timestamp.
-    """
-
-    id: int = Field(..., description="Principle ID")
-    text: str = Field(..., description="Principle description")
-    category: str = Field(..., description="Category")
-    origin: str = Field(..., description="Origin")
-    validated_count: int = Field(..., description="Validated count")
-    invalidated_count: int = Field(..., description="Invalidated count")
-    weight: float = Field(..., description="Weight")
-    validation_rate: float = Field(..., description="Validation rate (%)")
-    last_applied: str | None = Field(None, description="Last applied")
-    recent_applications: list[dict] = Field(..., description="Recent applications")
-    active: bool = Field(..., description="Active flag")
-    created_at: str = Field(..., description="Created timestamp")
+    id: int
+    text: str
+    category: str
+    origin: str = Field(..., description="How created")
+    validated_count: int
+    invalidated_count: int
+    weight: float
+    validation_rate: float = Field(..., description="%")
+    last_applied: str | None = None
+    recent_applications: list[dict]
+    active: bool
+    created_at: str
 
 
 class WhatIfAnalysis(BaseModel):
-    """What-if analysis response model.
-
-    Attributes:
-        signal_id: Original signal ID.
-        symbol: Stock symbol.
-        action: Signal action.
-        decision: Decision type (rejected/ignored).
-        price_at_pass: Price when signal was passed.
-        current_price: Current market price.
-        hypothetical_pnl: Hypothetical P/L if executed.
-        hypothetical_pnl_pct: Hypothetical P/L percentage.
-        days_since_pass: Days since signal was passed.
-        thesis_title: Associated thesis title.
-        signal_confidence: Original signal confidence.
-        pass_accuracy: Whether passing was correct.
-        regret_score: Regret score (0-100).
-        created_at: Signal creation date.
-    """
-
-    signal_id: int = Field(..., description="Signal ID")
-    symbol: str = Field(..., description="Stock symbol")
-    action: str = Field(..., description="Signal action")
-    decision: str = Field(..., description="Decision type")
-    price_at_pass: float = Field(..., description="Price at pass")
-    current_price: float = Field(..., description="Current price")
-    hypothetical_pnl: float = Field(..., description="Hypothetical P/L")
-    hypothetical_pnl_pct: float = Field(..., description="Hypothetical P/L %")
-    days_since_pass: int = Field(..., description="Days since pass")
-    thesis_title: str | None = Field(None, description="Thesis title")
-    signal_confidence: float = Field(..., description="Signal confidence")
-    pass_accuracy: str = Field(..., description="Pass accuracy assessment")
-    regret_score: float = Field(..., description="Regret score (0-100)")
-    created_at: str = Field(..., description="Signal created")
+    signal_id: int
+    symbol: str
+    action: str
+    decision: str = Field(..., description="rejected/ignored")
+    price_at_pass: float
+    current_price: float
+    hypothetical_pnl: float
+    hypothetical_pnl_pct: float
+    days_since_pass: int
+    thesis_title: str | None = None
+    signal_confidence: float
+    pass_accuracy: str = Field(..., description="correct/incorrect")
+    regret_score: float = Field(..., description="0-100")
+    created_at: str
 
 
 class WhatIfSummary(BaseModel):
-    """What-if summary statistics.
-
-    Attributes:
-        total_passed_signals: Total signals passed (rejected + ignored).
-        rejected_signals: Number of rejected signals.
-        ignored_signals: Number of ignored signals.
-        total_missed_pnl: Total missed P/L from passed signals.
-        total_avoided_loss: Total loss avoided by passing.
-        pass_accuracy_pct: Overall pass accuracy percentage.
-        reject_accuracy_pct: Rejection accuracy percentage.
-        ignore_cost_pnl: Cost of inattention (ignored signals P/L).
-        engagement_quality: Engagement quality score.
-        best_pass: Best decision (largest avoided loss).
-        worst_pass: Worst decision (largest missed gain).
-    """
-
-    total_passed_signals: int = Field(..., description="Total passed signals")
-    rejected_signals: int = Field(..., description="Rejected signals")
-    ignored_signals: int = Field(..., description="Ignored signals")
-    total_missed_pnl: float = Field(..., description="Total missed P/L")
-    total_avoided_loss: float = Field(..., description="Total avoided loss")
-    pass_accuracy_pct: float = Field(..., description="Pass accuracy %")
-    reject_accuracy_pct: float = Field(..., description="Reject accuracy %")
-    ignore_cost_pnl: float = Field(..., description="Ignore cost P/L")
-    engagement_quality: float = Field(..., description="Engagement quality score")
-    best_pass: dict = Field(..., description="Best pass decision")
-    worst_pass: dict = Field(..., description="Worst pass decision")
+    total_passed_signals: int = Field(..., description="rejected + ignored")
+    rejected_signals: int
+    ignored_signals: int
+    total_missed_pnl: float
+    total_avoided_loss: float
+    pass_accuracy_pct: float
+    reject_accuracy_pct: float
+    ignore_cost_pnl: float = Field(..., description="Cost of inattention")
+    engagement_quality: float
+    best_pass: dict
+    worst_pass: dict
 
 
 class PoliticianLeaderboardEntry(BaseModel):
-    """Politician leaderboard entry.
-
-    Attributes:
-        politician: Politician name.
-        score: Composite score 0-100.
-        tier: Tier label.
-        total_trades: Number of trades.
-        win_rate: Estimated win rate.
-        trade_size_preference: Preferred trade size.
-        filing_delay_avg_days: Average filing delay.
-    """
-
-    politician: str = Field(..., description="Politician name")
-    score: float = Field(..., description="Composite score")
-    tier: str = Field(..., description="Tier label")
-    total_trades: int = Field(0, description="Total trades")
-    win_rate: float = Field(0, description="Win rate")
-    trade_size_preference: str = Field("unknown", description="Size preference")
-    filing_delay_avg_days: float = Field(0, description="Avg filing delay")
+    politician: str
+    score: float = Field(..., description="0-100")
+    tier: str
+    total_trades: int = 0
+    win_rate: float = 0
+    trade_size_preference: str = "unknown"
+    filing_delay_avg_days: float = 0
 
 
 @router.get("/congress-trades/leaderboard", response_model=list[PoliticianLeaderboardEntry])
@@ -222,15 +109,6 @@ async def get_congress_leaderboard(
     engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> list[PoliticianLeaderboardEntry]:
-    """Get top politicians ranked by composite score.
-
-    Args:
-        limit: Max politicians to return.
-        engines: Engine container.
-
-    Returns:
-        List of PoliticianLeaderboardEntry sorted by score desc.
-    """
     try:
         from engine.congress_scoring import PoliticianScorer
 
@@ -262,15 +140,6 @@ async def get_whale_trades(
     engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> list[CongressTrade]:
-    """Get only whale-tier politician trades.
-
-    Args:
-        days: Number of days to look back.
-        engines: Engine container.
-
-    Returns:
-        List of CongressTrade from whale-tier politicians.
-    """
     try:
         trades = engines.db.fetchall(f"""
             SELECT ct.*, ps.score as pol_score, ps.tier as pol_tier
@@ -322,19 +191,6 @@ async def get_congress_trades(
     engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> list[CongressTrade]:
-    """Get recent Congress member trades with portfolio overlap analysis.
-
-    Returns Congress trades from the specified time period with analysis
-    of which trades overlap with our current portfolio holdings.
-
-    Args:
-        days: Number of days to look back (default 30).
-        overlap_only: If True, only return trades that overlap with portfolio.
-        engines: Engine container with database and pricing service.
-
-    Returns:
-        List of CongressTrade models with overlap analysis.
-    """
     try:
         # Get Congress trades from database with politician scores
         where_clause = f"""
@@ -448,15 +304,6 @@ async def get_congress_trades_summary(
     engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> CongressSummary:
-    """Get Congress trades summary statistics.
-
-    Args:
-        days: Number of days to analyze.
-        engines: Engine container with database.
-
-    Returns:
-        CongressSummary model with aggregated statistics.
-    """
     try:
         # Get summary statistics
         stats = engines.db.fetchone(f"""
@@ -548,53 +395,25 @@ async def get_congress_trades_summary(
 
 
 class PrinciplesSummary(BaseModel):
-    """Summary statistics for the principles engine.
-
-    Attributes:
-        total_active: Number of active principles.
-        validation_rate: Overall validation rate (0-1).
-        total_validated: Total validations across all principles.
-        total_invalidated: Total invalidations across all principles.
-        last_check: Timestamp of last validation check.
-    """
-
-    total_active: int = Field(..., description="Active principles count")
-    validation_rate: float = Field(..., description="Overall validation rate (0-1)")
-    total_validated: int = Field(..., description="Total validated count")
-    total_invalidated: int = Field(..., description="Total invalidated count")
-    last_check: str | None = Field(None, description="Last check timestamp")
+    total_active: int
+    validation_rate: float = Field(..., description="0-1")
+    total_validated: int
+    total_invalidated: int
+    last_check: str | None = None
 
 
 class DiscoveredPattern(BaseModel):
-    """A discovered pattern from trade analysis.
-
-    Attributes:
-        pattern_type: Type of pattern.
-        description: Human-readable description.
-        win_rate: Win rate of the pattern.
-        sample_size: Number of trades supporting the pattern.
-        suggested_category: Suggested principle category.
-    """
-
-    pattern_type: str = Field(..., description="Pattern type")
-    description: str = Field(..., description="Pattern description")
-    win_rate: float = Field(..., description="Win rate")
-    sample_size: int = Field(..., description="Sample size")
-    suggested_category: str = Field("", description="Suggested category")
+    pattern_type: str
+    description: str
+    win_rate: float
+    sample_size: int
+    suggested_category: str = ""
 
 
 class PrinciplesResponse(BaseModel):
-    """Full principles engine response with summary and discoveries.
-
-    Attributes:
-        principles: List of active principles.
-        summary: Aggregated summary statistics.
-        discoveries: Discovered patterns pending review.
-    """
-
-    principles: list[Principle] = Field(..., description="Principles list")
-    summary: PrinciplesSummary = Field(..., description="Summary statistics")
-    discoveries: list[DiscoveredPattern] = Field(..., description="Discovered patterns")
+    principles: list[Principle]
+    summary: PrinciplesSummary
+    discoveries: list[DiscoveredPattern]
 
 
 @router.get("/principles", response_model=PrinciplesResponse)
@@ -603,19 +422,6 @@ async def get_principles(
     engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> PrinciplesResponse:
-    """Get investment principles with validation statistics, summary, and discoveries.
-
-    Returns the active learning principles used by the signal engine
-    for confidence scoring and decision making, along with summary stats
-    and any discovered patterns pending review.
-
-    Args:
-        active_only: If True, only return active principles.
-        engines: Engine container with principles engine.
-
-    Returns:
-        PrinciplesResponse with principles, summary, and discoveries.
-    """
     try:
         from engine.principles import PrinciplesEngine
 
@@ -710,17 +516,9 @@ async def get_principles(
 
 
 class CreatePrincipleRequest(BaseModel):
-    """Request body for creating a new principle.
-
-    Attributes:
-        text: The principle statement.
-        category: Principle category.
-        origin: How the principle was created.
-    """
-
-    text: str = Field(..., description="Principle text")
-    category: str = Field("", description="Category")
-    origin: str = Field("user_input", description="Origin")
+    text: str
+    category: str = ""
+    origin: str = "user_input"
 
 
 @router.post("/principles", status_code=status.HTTP_201_CREATED)
@@ -729,15 +527,6 @@ async def create_principle(
     engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> dict:
-    """Create a new investment principle.
-
-    Args:
-        body: Principle text, category, and origin.
-        engines: Engine container with principles engine.
-
-    Returns:
-        Dictionary with the created principle ID.
-    """
     try:
         from engine.principles import PrinciplesEngine
 
@@ -761,19 +550,6 @@ async def get_what_if_analysis(
     engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> list[WhatIfAnalysis]:
-    """Get what-if analysis for passed signals.
-
-    Analyzes signals that were rejected or ignored to see how they would
-    have performed if executed. Used for decision quality assessment.
-
-    Args:
-        days: Number of days to look back.
-        decision_type: Optional filter for 'rejected' or 'ignored' signals.
-        engines: Engine container with database and pricing service.
-
-    Returns:
-        List of WhatIfAnalysis models with hypothetical outcomes.
-    """
     try:
         # Build query with optional decision filter
         where_conditions = [f"w.updated_at >= date('now', '-{days} days')"]
@@ -881,15 +657,6 @@ async def get_what_if_summary(
     engines: EngineContainer = Depends(get_engines),
     user: dict = Depends(get_current_user),
 ) -> WhatIfSummary:
-    """Get what-if analysis summary statistics.
-
-    Args:
-        days: Number of days to analyze.
-        engines: Engine container with database.
-
-    Returns:
-        WhatIfSummary model with aggregated decision quality metrics.
-    """
     try:
         # Get basic counts
         summary_stats = engines.db.fetchone(f"""
