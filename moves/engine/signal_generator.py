@@ -161,20 +161,6 @@ class SignalGenerator:
         thesis: Any,
         trigger: dict | None,
     ) -> dict | None:
-        """Attempt to generate a signal after checking blocks and scoring.
-
-        Runs all blocking checks, then multi-factor scoring, then risk
-        checks before creating the signal.
-
-        Args:
-            action: "BUY" or "SELL".
-            symbol: Ticker symbol.
-            thesis: Thesis model.
-            trigger: Price trigger dict or None.
-
-        Returns:
-            Dict describing the created signal, or None if blocked.
-        """
         # Check blocking conditions (skip for SELL — we want to exit)
         if action == "BUY":
             block_reason = self._check_blocking_conditions(
@@ -211,15 +197,6 @@ class SignalGenerator:
         symbol: str,
         thesis: Any,
     ) -> str | None:
-        """Check all blocking conditions for a BUY signal.
-
-        Args:
-            symbol: Ticker symbol.
-            thesis: Thesis model.
-
-        Returns:
-            Block reason string if blocked, None if clear.
-        """
         # Check thesis-related conditions
         thesis_block = self._check_thesis_conditions(thesis)
         if thesis_block:
@@ -233,7 +210,6 @@ class SignalGenerator:
         return None
 
     def _check_thesis_conditions(self, thesis: Any) -> str | None:
-        """Check thesis-specific blocking conditions."""
         # Conviction gate
         conviction = thesis.conviction if thesis.conviction else 0.0
         if conviction < _MIN_CONVICTION:
@@ -255,7 +231,6 @@ class SignalGenerator:
         return None
 
     def _check_thesis_age(self, thesis: Any) -> str | None:
-        """Check if thesis is old enough."""
         if not thesis.created_at:
             return None
 
@@ -275,7 +250,6 @@ class SignalGenerator:
         return None
 
     def _check_market_conditions(self, symbol: str) -> str | None:
-        """Check market-related blocking conditions."""
         # Earnings calendar block
         if is_earnings_imminent(symbol):
             return f"{symbol} earnings imminent (within 5 days)"
@@ -287,18 +261,6 @@ class SignalGenerator:
         return None
 
     def _get_think_session_count(self, thesis_id: int) -> int:
-        """Get the number of /think sessions for a thesis.
-
-        Checks the thoughts.sessions table via the moves DB (the bridge
-        may have synced session counts), or falls back to checking
-        thesis_versions as a proxy.
-
-        Args:
-            thesis_id: Thesis ID.
-
-        Returns:
-            Number of think sessions.
-        """
         # Try thesis_versions as a proxy for think sessions
         row = self.db.fetchone(
             "SELECT COUNT(*) as cnt FROM thesis_versions "
@@ -308,17 +270,6 @@ class SignalGenerator:
         return row["cnt"] if row else 0
 
     def _is_in_trading_blackout(self, symbol: str) -> bool:
-        """Check if a symbol is in a trading window blackout.
-
-        Looks at the trading_windows table for windows where the current
-        date falls between opens and closes dates.
-
-        Args:
-            symbol: Ticker symbol.
-
-        Returns:
-            True if the symbol is currently blacked out.
-        """
         now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
         # Check if there's an OPEN window right now
         open_window = self.db.fetchone(
@@ -401,16 +352,7 @@ class SignalGenerator:
         )
 
     def _check_watchlist_triggers(self, symbol: str) -> float:
-        """Check if any active watchlist triggers have been hit.
-
-        A trigger is considered "hit" if it has a triggered_at timestamp.
-
-        Args:
-            symbol: Ticker symbol.
-
-        Returns:
-            1.0 if any trigger was hit, 0.0 otherwise.
-        """
+        """Return 1.0 if any active triggers were hit, 0.0 otherwise."""
         try:
             row = self.db.fetchone(
                 """SELECT id FROM watchlist_triggers
@@ -469,18 +411,6 @@ class SignalGenerator:
         return round((sup - con + total) / (2 * total), 4)
 
     def _get_critic_assessment(self, thesis: Any) -> float:
-        """Get the last critic assessment score for a thesis.
-
-        Looks at thesis_versions for critic-related transitions as a
-        proxy. In the future, this will read from a dedicated critic
-        assessment table.
-
-        Args:
-            thesis: Thesis model.
-
-        Returns:
-            Critic score 0.0–1.0 (0.5 = neutral).
-        """
         # Use thesis status as a proxy for critic assessment
         status_scores = {
             ThesisStatus.CONFIRMED: 0.9,
@@ -894,22 +824,12 @@ class SignalGenerator:
         return parts
 
     def _get_held_symbols(self) -> set[str]:
-        """Get set of currently held symbols.
-
-        Returns:
-            Set of symbol strings with open positions.
-        """
         rows = self.db.fetchall(
             "SELECT DISTINCT symbol FROM positions WHERE shares > 0",
         )
         return {r["symbol"] for r in rows}
 
     def _get_pending_symbols(self) -> set[str]:
-        """Get set of symbols with pending signals.
-
-        Returns:
-            Set of symbol strings with a pending signal.
-        """
         rows = self.db.fetchall(
             "SELECT DISTINCT symbol FROM signals WHERE status = ?",
             (SignalStatus.PENDING.value,),
