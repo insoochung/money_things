@@ -643,7 +643,7 @@
     const ctx = c.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
     const w = c.parentElement.offsetWidth;
-    const h = 280;
+    const h = 300;
     c.width = w * dpr; c.height = h * dpr;
     c.style.width = w + 'px'; c.style.height = h + 'px';
     ctx.scale(dpr, dpr);
@@ -672,6 +672,20 @@
 
     const plotX = i => 40 + (i / (vals.length - 1)) * (w - 50);
     const plotY = v => 20 + ((max - v) / range) * (h - 40);
+
+    // x-axis date labels
+    const dates = nav.map(p => p.date || '');
+    const labelCount = Math.min(6, dates.length);
+    ctx.fillStyle = mutedC; ctx.font = '10px IBM Plex Mono'; ctx.textAlign = 'center';
+    for (let i = 0; i < labelCount; i++) {
+      const idx = Math.round(i * (dates.length - 1) / (labelCount - 1));
+      const d = dates[idx];
+      if (d) {
+        const label = d.slice(5); // MM-DD
+        ctx.fillText(label, plotX(idx), h - 4);
+      }
+    }
+    ctx.textAlign = 'start';
 
     // gradient fill
     const grad = ctx.createLinearGradient(0, 0, 0, h);
