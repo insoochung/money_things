@@ -122,17 +122,13 @@ class SignalGenerator:
 
         results: list[dict] = []
         held_symbols = self._get_held_symbols()
-        pending_symbols = self._get_pending_symbols()
+        pending_signals = self._get_pending_signal_map()
 
         for symbol in thesis.symbols:
-            if symbol in pending_symbols:
-                logger.debug(
-                    "signal_scan: skipping %s — pending signal exists",
-                    symbol,
-                )
-                continue
 
             trigger = self._check_price_triggers(symbol, thesis)
+
+            existing_id = pending_signals.get(symbol)
 
             if thesis.status in _BUY_STATUSES and symbol not in held_symbols:
                 if trigger or thesis.status in {
@@ -141,6 +137,7 @@ class SignalGenerator:
                 }:
                     result = self._try_generate_signal(
                         "BUY", symbol, thesis, trigger,
+                        pending_signal_id=existing_id,
                     )
                     if result:
                         results.append(result)
@@ -148,6 +145,7 @@ class SignalGenerator:
             elif thesis.status in _SELL_STATUSES and symbol in held_symbols:
                 result = self._try_generate_signal(
                     "SELL", symbol, thesis, trigger,
+                    pending_signal_id=existing_id,
                 )
                 if result:
                     results.append(result)
@@ -160,6 +158,8 @@ class SignalGenerator:
         symbol: str,
         thesis: Any,
         trigger: dict | None,
+        *,
+        pending_signal_id: int | None = None,
     ) -> dict | None:
         # Check blocking conditions (skip for SELL — we want to exit)
         if action == "BUY":
@@ -190,6 +190,7 @@ class SignalGenerator:
 
         return self._generate_signal(
             action, symbol, thesis, raw_confidence, reasoning,
+            pending_signal_id=pending_signal_id,
         )
 
     def _check_blocking_conditions(
@@ -782,18 +783,13 @@ class SignalGenerator:
         thesis: Any,
         raw_confidence: float,
         reasoning: str,
+        *,
+        pending_signal_id: int | None = None,
     ) -> dict | None:
-        """Create a signal after scoring and risk check.
+        """Create or update a signal after scoring and risk check.
 
-        Args:
-            action: "BUY" or "SELL".
-            symbol: Ticker symbol.
-            thesis: Thesis model.
-            raw_confidence: Multi-factor confidence 0.0–1.0.
-            reasoning: Human-readable reasoning string.
-
-        Returns:
-            Dict describing the created signal, or None if blocked.
+        If pending_signal_id is set, updates the existing pending signal
+        instead of creating a new one (dedup per ticker).
         """
         confidence = self._score_and_validate_confidence(
             raw_confidence, thesis.status.value, action, symbol
@@ -815,6 +811,17 @@ class SignalGenerator:
                 action, symbol, risk_result.reason,
             )
             return None
+
+        if pending_signal_id:
+            self._update_pending_signal(
+                pending_signal_id, confidence, reasoning, action,
+            )
+            signal.id = pending_signal_id
+            result = self._build_signal_result(
+                signal, action, symbol, confidence, size_pct, reasoning,
+            )
+            result["updated"] = True
+            return result
 
         created = self.signal_engine.create_signal(signal)
         return self._build_signal_result(
@@ -957,9 +964,26 @@ class SignalGenerator:
         )
         return {r["symbol"] for r in rows}
 
-    def _get_pending_symbols(self) -> set[str]:
+    def _get_pending_signal_map(self) -> dict[str, int]:
+        """Return map of symbol → signal ID for pending signals."""
         rows = self.db.fetchall(
-            "SELECT DISTINCT symbol FROM signals WHERE status = ?",
+            "SELECT id, symbol FROM signals WHERE status = ? ORDER BY created_at DESC",
             (SignalStatus.PENDING.value,),
         )
-        return {r["symbol"] for r in rows}
+        result: dict[str, int] = {}
+        for r in rows:
+            if r["symbol"] not in result:
+                result[r["symbol"]] = r["id"]
+        return result
+
+    def _update_pending_signal(
+        self, signal_id: int, confidence: float, reasoning: str, action: str
+    ) -> None:
+        """Update an existing pending signal with fresh analysis."""
+        self.db.execute(
+            """UPDATE signals SET confidence = ?, reasoning = ?, action = ?,
+               created_at = datetime('now') WHERE id = ? AND status = 'pending'""",
+            (confidence, reasoning, action, signal_id),
+        )
+        self.db.connect().commit()
+        logger.info("Updated pending signal %d with fresh analysis", signal_id)

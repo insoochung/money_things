@@ -98,12 +98,14 @@ def test_run_scan_generates_buy_for_unheld_symbols(generator):
         assert r["signal_id"] is not None
 
 
-def test_run_scan_no_duplicates(generator):
-    """Should not create duplicate signals for symbols with pending signals."""
+def test_run_scan_updates_pending_instead_of_duplicating(generator):
+    """Should update existing pending signals instead of creating duplicates."""
     first = generator.run_scan()
     assert len(first) >= 1
     second = generator.run_scan()
-    assert len(second) == 0
+    # Second scan updates existing pending signals, not skips
+    for r in second:
+        assert r.get("updated") is True
 
 
 def test_run_scan_generates_sell_for_weakening_thesis(seeded_db):
