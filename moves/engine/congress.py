@@ -346,6 +346,72 @@ class CongressTradesEngine:
 
         return [dict(t) for t in overlapping]
 
+    def _should_skip_trade_for_signal(self, trade: dict, enriched: dict) -> bool:
+        """Check if a trade should be skipped for signal generation.
+
+        Args:
+            trade: Raw trade data.
+            enriched: Enriched trade with politician tier.
+
+        Returns:
+            True if trade should be skipped, False otherwise.
+        """
+        # Only generate BUY signals
+        if trade.get("action") != "buy":
+            return True
+
+        # Skip noise-tier politicians
+        tier = enriched.get("politician_tier", "unknown")
+        if tier == "noise":
+            return True
+
+        return False
+
+    def _get_confidence_for_politician_tier(self, tier: str) -> float:
+        """Get confidence level based on politician tier.
+
+        Args:
+            tier: Politician tier (whale/notable/average/unknown).
+
+        Returns:
+            Confidence level between 0.0 and 1.0.
+        """
+        confidence_map = {
+            "whale": 0.6,
+            "notable": 0.45,
+            "average": 0.3,
+            "unknown": 0.3
+        }
+        return confidence_map.get(tier, 0.3)
+
+    def _create_congress_signal(
+        self,
+        symbol: str,
+        thesis_id: int | None,
+        confidence: float,
+        reasoning: str,
+    ) -> Signal:
+        """Create a signal from congress trade data.
+
+        Args:
+            symbol: Stock symbol.
+            thesis_id: Related thesis ID or None.
+            confidence: Signal confidence.
+            reasoning: Signal reasoning.
+
+        Returns:
+            Configured Signal object.
+        """
+        return Signal(
+            action=SignalAction.BUY,
+            symbol=symbol,
+            thesis_id=thesis_id,
+            confidence=confidence,
+            source=SignalSource.CONGRESS_TRADE,
+            reasoning=reasoning,
+            status=SignalStatus.PENDING,
+        )
+
     def generate_signals(self, user_id: int) -> list[Signal]:
         """Create low-confidence signals for congress trades overlapping user's portfolio.
 
@@ -360,39 +426,22 @@ class CongressTradesEngine:
 
         overlapping = self.check_overlap(user_id)
         signals: list[Signal] = []
-
         thesis_map = self._build_thesis_map(user_id)
 
         for trade in overlapping:
-            if trade.get("action") != "buy":
+            enriched = self.scorer.enrich_trade(trade)
+
+            if self._should_skip_trade_for_signal(trade, enriched):
                 continue
 
             symbol = trade["symbol"]
             thesis_id = thesis_map.get(symbol)
-
-            # Enrich trade and check tier
-            enriched = self.scorer.enrich_trade(trade)
             tier = enriched.get("politician_tier", "unknown")
 
-            # Skip noise-tier politicians
-            if tier == "noise":
-                continue
-
-            # Set confidence based on tier
-            confidence_map = {"whale": 0.6, "notable": 0.45, "average": 0.3, "unknown": 0.3}
-            confidence = confidence_map.get(tier, 0.3)
-
+            confidence = self._get_confidence_for_politician_tier(tier)
             reasoning = self.scorer.build_reasoning(enriched)
 
-            signal = Signal(
-                action=SignalAction.BUY,
-                symbol=symbol,
-                thesis_id=thesis_id,
-                confidence=confidence,
-                source=SignalSource.CONGRESS_TRADE,
-                reasoning=reasoning,
-                status=SignalStatus.PENDING,
-            )
+            signal = self._create_congress_signal(symbol, thesis_id, confidence, reasoning)
             created = self.signal_engine.create_signal(signal)
             signals.append(created)
 
