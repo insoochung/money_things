@@ -223,3 +223,43 @@ After thorough analysis, the codebase quality is **excellent** with only minor c
 - Regular security reviews for new API endpoints
 
 **Impact:** Eliminated critical security vulnerabilities while maintaining code quality standards. All tests continue to pass.
+
+## 2026-02-10 03:23 - Dashboard JS/API Audit - Field Mismatches Fixed (Quality area #6)
+
+**Area:** JavaScript frontend and Python backend API integration
+
+**Task:** Systematic audit of all `api()` and `apiWrite()` calls in moves.js against Python route definitions
+
+### Critical Mismatches Found & Fixed
+
+**1. FundStatus Model Missing Fields**
+- **Issue:** JS accesses `data.sharpe_ratio` and `data.mode` but fields missing from Python model
+- **Fix:** Added `sharpe_ratio` and `mode` fields to FundStatus model with proper calculations
+
+**2. Position Model Missing Range Bar Fields**
+- **Issue:** JS accesses `p.stop`, `p.target`, `p.review_days` for range bar display but fields missing
+- **Fix:** Added fields to Position model with data from signals table and thesis horizons
+
+**3. ExposureBreakdown Missing Cash Field**
+- **Issue:** JS accesses `d.cash_pct` but field missing from Python model
+- **Fix:** Added `cash_pct` field with calculation from portfolio cash balance
+
+**4. Risk Endpoint Structure Mismatch**
+- **Issue:** JS expects flat fields (`d.worst_case_loss`, `d.crash_impact`, etc.) but Python returns nested structure
+- **Fix:** Modified risk endpoint to return flat fields while preserving nested structure for backward compatibility
+
+### Verification Results
+- **✅ All 24+ JavaScript API endpoints verified** - All routes exist and are correctly mounted
+- **✅ POST/PUT/DELETE operations confirmed** - All write operations have matching Python endpoints  
+- **✅ Field access patterns audited** - Fixed 7 critical field mismatches
+- **✅ Error handling preserved** - JavaScript gracefully handles missing optional fields
+
+### Quality Impact
+- **All 479 tests pass** after fixes
+- **No breaking changes** - backward compatible enhancements only
+- **Cache version bumped** to v=4 as required by safety rules
+- **Comprehensive documentation** created in API_AUDIT.md
+
+**Commit:** d2cbdfd
+
+**Assessment:** The dashboard now has fully compatible API integration. All JavaScript field accesses match Python response models, eliminating undefined value errors and improving user experience.
