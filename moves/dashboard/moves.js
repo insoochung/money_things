@@ -146,11 +146,17 @@
         { name: 'SPY', key: 'spy_price', chgKey: 'spy_change_pct', prefix: '$', suffix: '' },
         { name: 'QQQ', key: 'qqq_price', chgKey: 'qqq_change_pct', prefix: '$', suffix: '' },
       ];
+      // Fear & Greed as special first item
+      const fgColors = { 'Extreme Fear': '#e03e3e', 'Fear': '#e8590c', 'Neutral': '#9b9a97', 'Greed': '#2f9e44', 'Extreme Greed': '#2f9e44' };
+      const fgHtml = d.fear_greed_index != null
+        ? `<div class="macro-item" style="min-width:120px"><span class="macro-label">Fear & Greed</span><span class="macro-value" style="color:${fgColors[d.fear_greed_label] || '#9b9a97'}">${d.fear_greed_index}</span><span class="macro-change" style="color:${fgColors[d.fear_greed_label] || '#9b9a97'}">${d.fear_greed_label || ''}</span></div>`
+        : '';
+
       const arr = macroMap.filter(m => d[m.key] != null).map(m => ({
         name: m.name, value: d[m.key], change: d[m.chgKey] || 0, prefix: m.prefix, chgSuffix: m.chgSuffix || '%'
       }));
-      if (!arr.length) { $('#macro-strip').innerHTML = emptyHTML('No macro data'); return; }
-      $('#macro-strip').innerHTML = arr.map(m => {
+      if (!arr.length && !fgHtml) { $('#macro-strip').innerHTML = emptyHTML('No macro data'); return; }
+      $('#macro-strip').innerHTML = fgHtml + arr.map(m => {
         const chg = m.change;
         const valStr = m.prefix + fmt(m.value);
         const chgStr = (chg >= 0 ? '+' : '') + fmt(chg) + m.chgSuffix;

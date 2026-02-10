@@ -164,6 +164,8 @@ class MacroIndicators(BaseModel):
     qqq_price: float = Field(..., description="QQQ price")
     qqq_change_pct: float = Field(..., description="QQQ change (%)")
     market_sentiment: float = Field(..., description="Market sentiment (-100 to 100)")
+    fear_greed_index: int = Field(0, description="CNN Fear & Greed Index (0-100)")
+    fear_greed_label: str = Field("", description="Fear & Greed label")
 
 
 @router.get("/risk", response_model=dict)
@@ -592,6 +594,35 @@ async def get_risk_heatmap(
         )
 
 
+def _compute_fear_greed(vix: float, spy_change_pct: float) -> tuple[int, str]:
+    """Compute a Fear & Greed score (0-100) from VIX and market momentum.
+
+    0 = Extreme Fear, 50 = Neutral, 100 = Extreme Greed.
+    Uses VIX level (60% weight) and SPY momentum (40% weight).
+    """
+    # VIX component: VIX 10 = 100 (greed), VIX 30 = 0 (fear)
+    vix_score = max(0, min(100, (30 - vix) / 20 * 100)) if vix > 0 else 50
+
+    # Momentum component: SPY daily change
+    momentum_score = max(0, min(100, 50 + spy_change_pct * 20))
+
+    score = int(vix_score * 0.6 + momentum_score * 0.4)
+    score = max(0, min(100, score))
+
+    if score <= 20:
+        label = "Extreme Fear"
+    elif score <= 40:
+        label = "Fear"
+    elif score <= 60:
+        label = "Neutral"
+    elif score <= 80:
+        label = "Greed"
+    else:
+        label = "Extreme Greed"
+
+    return score, label
+
+
 @router.get("/macro-indicators", response_model=MacroIndicators)
 async def get_macro_indicators(
     engines: EngineContainer = Depends(get_engines), user: dict = Depends(get_current_user)
@@ -637,6 +668,11 @@ async def get_macro_indicators(
         # Market sentiment: VIX < 15 = bullish (positive), > 25 = bearish (negative)
         sentiment = max(-100, min(100, (20 - vix_price) * 5)) if vix_price > 0 else 0.0
 
+        # Fear & Greed Index — composite of VIX, momentum, and breadth
+        fg_score, fg_label = _compute_fear_greed(
+            vix_price, prices["spy"]["change_pct"],
+        )
+
         indicators = MacroIndicators(
             vix=vix_price,
             vix_change_pct=prices["vix"]["change_pct"],
@@ -655,6 +691,8 @@ async def get_macro_indicators(
             qqq_price=prices["qqq"]["price"],
             qqq_change_pct=prices["qqq"]["change_pct"],
             market_sentiment=round(sentiment, 1),
+            fear_greed_index=fg_score,
+            fear_greed_label=fg_label,
         )
 
         return indicators
