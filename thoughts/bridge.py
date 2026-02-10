@@ -7,10 +7,13 @@ and pushing thesis updates back.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from typing import Any
 
 from engine import ThoughtsEngine
+
+logger = logging.getLogger(__name__)
 
 
 class ThoughtsBridge:

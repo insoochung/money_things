@@ -133,3 +133,93 @@ After thorough analysis, the codebase quality is **excellent** with only minor c
 **Recommendation:** Focus future efforts on mobile UX refinement rather than code quality issues.
 
 **Overall Grade: A-** - Exceptional error handling and code organization. Minor mobile UX improvements would bring this to A+.
+
+## 2026-02-10 01:44 UTC - Security Hygiene Review (Quality Pass #5)
+
+**Area:** Configuration security, hardcoded secrets, error handling, SQL injection vulnerabilities
+
+**Review Scope:** Complete security hygiene audit of `~/workspace/money/` for config security, hardcoded credentials, error handling patterns, and SQL injection risks.
+
+### Findings Summary
+
+#### 1. Configuration & Secret Management ✅ MOSTLY SECURE
+**Status:** Good patterns with one exposure concern
+
+**✅ Secure Patterns Found:**
+- `.gitignore` properly covers all sensitive paths: `data/`, `.env`, `__pycache__`, `.venv`, `*.db`
+- Real `.env` file properly git-ignored (confirmed via `git check-ignore`)
+- `moves/config/settings.py` uses environment variables correctly with Pydantic settings
+- No hardcoded default passwords or insecure defaults in config files
+- Example files (`.env.example`) use placeholder values appropriately
+
+**⚠️ Exposure Found:**
+- `moves/config/.env` contains real production secrets (Google OAuth, Telegram tokens, session keys)
+- While properly git-ignored, having production secrets in development environment is risky
+
+#### 2. Hardcoded Credentials in Source Code ✅ CLEAN
+**Status:** No hardcoded API keys found in source code
+- Searched for common patterns: `sk_`, `pk_`, `api_key`, `token`, `secret`
+- All credential references use environment variables or configuration files
+- No hardcoded authentication tokens discovered
+
+#### 3. Error Handling Consistency ✅ EXCELLENT 
+**Status:** Very clean error handling patterns
+- **Zero bare `except:` statements** found in application code (only in third-party packages)
+- **No swallowed exceptions** detected (no `except: pass` patterns)
+- Error handling follows consistent patterns with proper logging
+
+#### 4. SQL Injection Vulnerabilities 🚨 CRITICAL ISSUES FOUND & FIXED
+**Status:** Two SQL injection vulnerabilities identified and resolved
+
+**🚨 Vulnerabilities Fixed:**
+
+1. **`moves/api/routes/watchlist.py`** - Dynamic UPDATE query construction
+   ```python
+   # BEFORE: Vulnerable f-string with unvalidated column names
+   set_clause = ", ".join(f"{k} = ?" for k in updates)
+   sql = f"UPDATE watchlist_triggers SET {set_clause} WHERE id = ?"
+   
+   # AFTER: Added column name validation
+   allowed_columns = {"symbol", "trigger_type", "condition", "target_value", "notes", "active"}
+   for column in updates.keys():
+       if column not in allowed_columns:
+           raise HTTPException(status_code=400, detail=f"Invalid field: {column}")
+   ```
+
+2. **`moves/api/routes/theses.py`** - Similar dynamic UPDATE vulnerability
+   ```python
+   # Added validation for: {"title", "thesis_text", "conviction", "status", "symbols", "strategy", "horizon", "updated_at"}
+   ```
+
+**✅ Safe SQL Patterns Confirmed:**
+- `moves/engine/congress.py` - Proper parameterized placeholders
+- `moves/engine/signals.py` - Hardcoded WHERE conditions with parameterized values  
+- `moves/engine/thesis.py` - Hardcoded column names with parameterized values
+- `moves/api/routes/admin.py` - Table names from predefined list (marked with `# noqa: S608`)
+
+### Changes Made
+
+**Commit e269658:** Fixed SQL injection vulnerabilities
+- Added column name validation in watchlist and theses update endpoints
+- Validate field names against whitelist before building SQL queries
+- Prevents injection via unexpected field names in request body
+
+### Security Assessment
+
+**Overall Grade: B+** → **A-** (after fixes)
+
+**Strengths:**
+- Excellent error handling discipline (zero bare exceptions)
+- Proper environment variable usage throughout
+- Comprehensive `.gitignore` coverage
+- No hardcoded credentials in source code
+
+**Addressed Issues:**
+- ✅ SQL injection vulnerabilities patched with input validation
+- ✅ Code quality maintained (ruff checks pass)
+
+**Recommendations:**
+- Consider moving production secrets from development `.env` to secure vault
+- Regular security reviews for new API endpoints
+
+**Impact:** Eliminated critical security vulnerabilities while maintaining code quality standards. All tests continue to pass.

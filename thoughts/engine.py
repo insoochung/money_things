@@ -7,11 +7,14 @@ in a dedicated SQLite database. Reads from the moves DB for portfolio context.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Thoughts DB
 THOUGHTS_DB_PATH = Path(__file__).parent / "data" / "thoughts.db"

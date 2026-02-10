@@ -691,50 +691,67 @@ class SignalGenerator:
         Returns:
             Dict with trigger info if significant move, None otherwise.
         """
+        price_data = self._get_current_price_data(symbol)
+        if not price_data:
+            return None
+
+        # Check daily movement trigger
+        daily_trigger = self._check_daily_movement(price_data)
+        if daily_trigger:
+            return daily_trigger
+
+        # Check weekly movement trigger
+        weekly_trigger = self._check_weekly_movement(symbol, price_data)
+        return weekly_trigger
+
+    def _get_current_price_data(self, symbol: str) -> dict | None:
+        """Get current price data, handling errors gracefully."""
         try:
             price_data = self.pricing.get_price(symbol, db=self.db)
         except Exception:
-            logger.warning(
-                "signal_scan: price fetch failed for %s", symbol,
-            )
+            logger.warning("signal_scan: price fetch failed for %s", symbol)
             return None
 
         if "error" in price_data or not price_data.get("price"):
             return None
 
-        change_pct = price_data.get("change_percent")
-        if change_pct is None:
+        return price_data
+
+    def _check_daily_movement(self, price_data: dict) -> dict | None:
+        """Check if daily price movement exceeds threshold."""
+        change_percentage = price_data.get("change_percent")
+        if change_percentage is None:
             return None
 
-        abs_change = abs(change_pct)
-
+        abs_change = abs(change_percentage)
         if abs_change >= _DAILY_MOVE_THRESHOLD:
             return {
                 "type": "daily_move",
                 "price": price_data["price"],
-                "change_percent": change_pct,
-                "direction": "up" if change_pct > 0 else "down",
+                "change_percent": change_percentage,
+                "direction": "up" if change_percentage > 0 else "down",
             }
 
+        return None
+
+    def _check_weekly_movement(self, symbol: str, price_data: dict) -> dict | None:
+        """Check if weekly price movement exceeds threshold."""
         try:
-            history = self.pricing.get_history(
-                symbol, period="5d", db=self.db,
-            )
-            if history and len(history) >= 2:
-                start_price = history[0]["close"]
-                end_price = history[-1]["close"]
-                weekly_change = (
-                    (end_price - start_price) / start_price
-                ) * 100
-                if abs(weekly_change) >= _WEEKLY_MOVE_THRESHOLD:
-                    return {
-                        "type": "weekly_move",
-                        "price": price_data["price"],
-                        "change_percent": round(weekly_change, 2),
-                        "direction": (
-                            "up" if weekly_change > 0 else "down"
-                        ),
-                    }
+            history = self.pricing.get_history(symbol, period="5d", db=self.db)
+            if not history or len(history) < 2:
+                return None
+
+            start_price = history[0]["close"]
+            end_price = history[-1]["close"]
+            weekly_change = ((end_price - start_price) / start_price) * 100
+
+            if abs(weekly_change) >= _WEEKLY_MOVE_THRESHOLD:
+                return {
+                    "type": "weekly_move",
+                    "price": price_data["price"],
+                    "change_percent": round(weekly_change, 2),
+                    "direction": "up" if weekly_change > 0 else "down",
+                }
         except Exception:
             pass
 
@@ -885,46 +902,68 @@ class SignalGenerator:
         Returns:
             Reasoning string.
         """
-        parts = [
-            f"Thesis '{thesis.title}' ({thesis.status.value})",
-        ]
+        parts = []
 
-        if action == "BUY":
-            parts.append(f"{symbol} not yet in portfolio")
-        else:
-            parts.append(
-                f"{symbol} held — thesis {thesis.status.value}",
-            )
+        # Add thesis context
+        parts.append(self._build_thesis_context(thesis))
 
+        # Add action context
+        parts.append(self._build_action_context(action, symbol, thesis))
+
+        # Add price trigger info
         if trigger:
-            parts.append(
-                f"Price {trigger['direction']} "
-                f"{abs(trigger['change_percent']):.1f}% "
-                f"({trigger['type']})"
-            )
+            parts.append(self._build_trigger_context(trigger))
 
+        # Add multi-factor score details
         if mf_score:
-            factors = []
-            if mf_score.watchlist_trigger > 0:
-                factors.append("watchlist trigger hit")
-            if mf_score.news_sentiment > 0.6:
-                factors.append("positive news sentiment")
-            elif mf_score.news_sentiment < 0.4:
-                factors.append("negative news sentiment")
-            if mf_score.congress_alignment > 0.6:
-                factors.append("congress buying aligned")
-            if factors:
-                parts.append("Factors: " + ", ".join(factors))
-            parts.append(
-                f"Multi-factor score: {mf_score.weighted_total:.2f}"
-            )
+            parts.extend(self._build_multifactor_context(mf_score))
 
-        # Append enriched congress reasoning if available
+        # Add congress details
         congress_detail = self._get_congress_reasoning(symbol)
         if congress_detail:
             parts.append(f"Congress: {congress_detail}")
 
         return ". ".join(parts) + "."
+
+    def _build_thesis_context(self, thesis: Any) -> str:
+        """Build thesis context part of reasoning."""
+        return f"Thesis '{thesis.title}' ({thesis.status.value})"
+
+    def _build_action_context(self, action: str, symbol: str, thesis: Any) -> str:
+        """Build action context part of reasoning."""
+        if action == "BUY":
+            return f"{symbol} not yet in portfolio"
+        else:
+            return f"{symbol} held — thesis {thesis.status.value}"
+
+    def _build_trigger_context(self, trigger: dict) -> str:
+        """Build price trigger context part of reasoning."""
+        return (
+            f"Price {trigger['direction']} "
+            f"{abs(trigger['change_percent']):.1f}% "
+            f"({trigger['type']})"
+        )
+
+    def _build_multifactor_context(self, mf_score: MultiFactorScore) -> list[str]:
+        """Build multi-factor score context parts of reasoning."""
+        parts = []
+
+        # Build factors list
+        factors = []
+        if mf_score.watchlist_trigger > 0:
+            factors.append("watchlist trigger hit")
+        if mf_score.news_sentiment > 0.6:
+            factors.append("positive news sentiment")
+        elif mf_score.news_sentiment < 0.4:
+            factors.append("negative news sentiment")
+        if mf_score.congress_alignment > 0.6:
+            factors.append("congress buying aligned")
+
+        if factors:
+            parts.append("Factors: " + ", ".join(factors))
+
+        parts.append(f"Multi-factor score: {mf_score.weighted_total:.2f}")
+        return parts
 
     def _get_held_symbols(self) -> set[str]:
         """Get set of currently held symbols.
