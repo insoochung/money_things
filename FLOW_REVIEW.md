@@ -2,9 +2,9 @@
 
 ## System Overview
 
-Two modules, **662 tests**, zero lint warnings:
-- **money_moves** (moves/): FastAPI dashboard, trading engine, Schwab broker adapter — 470 tests
-- **money_thoughts** (thoughts/): Thesis development, journal, research sub-agents — 192 tests
+Two modules, zero lint warnings:
+- **money_moves** (moves/): FastAPI dashboard, trading engine, Schwab broker adapter
+- **money_thoughts** (thoughts/): Thesis development, journal, research sub-agents
 
 Live at **https://munnythoughts.com** with Google OAuth.
 
@@ -37,11 +37,10 @@ Live at **https://munnythoughts.com** with Google OAuth.
 
 ## Architecture Health
 
-| Module | Tests | Lint | Status |
+| Module | Lint | Status |
 |--------|-------|------|--------|
-| moves/ | 470 | ✅ | A |
-| thoughts/ | 192 | ✅ | A |
-| **Total** | **662** | **✅** | **A** |
+| moves/ | ✅ | A |
+| thoughts/ | ✅ | A |
 
 ## Remaining Items
 

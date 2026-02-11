@@ -26,10 +26,10 @@ money_thoughts ──► Thesis Development (conversational AI research)
 money_moves ───► Execution Engine (web dashboard, Schwab API, Telegram bot)
 ```
 
-| Module | Purpose | Tests | Tech Stack |
+| Module | Purpose | Tech Stack |
 |--------|---------|-------|------------|
-| **moves/** | Portfolio dashboard, signal engine, execution | 470 | FastAPI, SQLite, schwab-py |
-| **thoughts/** | AI research, thesis development, context building | 192 | Python, OpenClaw integration |
+| **moves/** | Portfolio dashboard, signal engine, execution | FastAPI, SQLite, schwab-py |
+| **thoughts/** | AI research, thesis development, context building | Python, OpenClaw integration |
 
 ## Key Features
 
@@ -43,7 +43,7 @@ money_moves ───► Execution Engine (web dashboard, Schwab API, Telegram b
 
 ## Status
 
-**Production-ready.** 662 tests passing, live at munnythoughts.com with Google OAuth.
+**Production-ready.** Live at munnythoughts.com with Google OAuth. Full test suite via `./run_tests.sh`.
 
 See `FLOW_REVIEW.md` for detailed system health and `moves/CLAUDE.md` + `thoughts/CLAUDE.md` for module documentation.
 

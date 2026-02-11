@@ -49,7 +49,7 @@ Functions are focused and single-purpose. The largest methods (`MockBroker.place
 
 ### Test Results: ✅ All Pass
 ```
-470 passed, 1 warning in ~42s
+All passing, 1 warning (websockets deprecation — not project code)
 ```
 The single warning is a deprecation notice from the `websockets` library (not project code).
 
