@@ -45,7 +45,7 @@ money_moves ───► Execution Engine (web dashboard, Schwab API, Telegram b
 
 **Production-ready.** Live at munnythoughts.com with Google OAuth. Full test suite via `./run_tests.sh`.
 
-See `FLOW_REVIEW.md` for detailed system health and `moves/CLAUDE.md` + `thoughts/CLAUDE.md` for module documentation.
+See `moves/CLAUDE.md` + `thoughts/CLAUDE.md` for module documentation and `moves/REVIEW.md` for quality status.
 
 ## Integration
 

@@ -1,5 +1,7 @@
 # money_thoughts Module Specification
 
+> **Implementation status:** This spec describes the full design vision. The current implementation uses a simplified 5-command model (`/think`, `/note`, `/journal`, `/brief`, `/trade`) — see `thoughts/CLAUDE.md` for the actual command set. Many commands below (e.g., `/thesis`, `/discover`, `/research`, `/idea`, `/act`, `/pass`) are planned but not yet implemented.
+
 The conversational thesis development, research, review, and learning engine for investment decision-making. This module is the "thinking" half of a two-module system (money_thoughts + money_moves).
 
 ---
