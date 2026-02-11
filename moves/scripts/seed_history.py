@@ -24,7 +24,7 @@ def main(db_path: str = "data/moves_mock.db") -> None:
 
     # Fetch 1 year of daily data
     tickers = yf.Tickers(" ".join(holdings.keys()))
-    hist = tickers.history(period="1y", interval="1d")
+    hist = tickers.history(period="2y", interval="1d")
 
     if hist.empty:
         print("Failed to fetch price data")

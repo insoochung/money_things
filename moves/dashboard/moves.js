@@ -9,7 +9,7 @@
     prices: {},
     sortCol: 'ticker',
     sortAsc: true,
-    perfRange: '1M',
+    perfRange: '1Y',
     perfData: null,
     benchData: null,
     ddData: null,
@@ -616,7 +616,7 @@
   // ── 10. Performance Chart ──
   async function loadPerformance() {
     try {
-      const rangeDays = { '1M': 30, '3M': 90, '6M': 180, '1Y': 365, 'ALL': 1825 };
+      const rangeDays = { '1M': 30, '3M': 90, '6M': 180, '1Y': 365, '2Y': 730, 'ALL': 3650 };
       const days = rangeDays[state.perfRange] || 90;
       const [perf, bSpy, bQqq, bIwm] = await Promise.all([
         api(`/api/fund/performance?days=${days}`),
