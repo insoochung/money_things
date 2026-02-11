@@ -68,10 +68,9 @@ Style: content-first, no chrome, warm, typography-driven
 - **Congress Trades** — Politician trading as sentiment signal
 - **Domain Expertise** — Configurable profile (not hardcoded)
 
-## Full Specification
+## Specification
 
-- `spec/money_moves.md` — Complete spec (schema, APIs, dashboard, signal flow)
-- `PLAN.md` — Phased implementation plan
+- `spec/money_moves.md` — Design decisions and concepts (high-level)
 - `spec/clawdbot.md` — OpenClaw/Telegram setup guide
 
 ## Quick Start

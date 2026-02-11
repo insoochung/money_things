@@ -51,9 +51,14 @@ These are available when called from the money_moves Telegram bot:
 - **Sends to money_moves:** Validated theses + ticker universe + criteria via `/push`
 - **Receives from money_moves:** Trade results, P&L, what-ifs, LLM reasoning summaries
 
-## Full Specification
+## Key Files
 
-See `spec/money_thoughts.md` for complete details including folder structure, command specs, data model, memory system, and integration formats.
+- `commands.py` — All 5 command implementations
+- `engine.py` — Core conversation engine
+- `bridge.py` — Pushes theses to money_moves API
+- `context_builder.py` — Builds conversation context from memory
+- `AGENT_PROMPT.md` — System prompt injected into /think sub-agents
+- `memory/principles.md` — Investment rules (referenced by skills)
 
 ## Python Environment
 

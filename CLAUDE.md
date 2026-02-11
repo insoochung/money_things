@@ -52,13 +52,11 @@ OpenClaw runs on a VPS, bridging both modules via Telegram:
 
 See `moves/spec/clawdbot.md` for full setup guide.
 
-## Module Specs
+## Module Docs
 
 - `thoughts/CLAUDE.md` — money_thoughts entry point
-- `thoughts/spec/money_thoughts.md` — full specification
 - `moves/CLAUDE.md` — money_moves entry point
-- `moves/spec/money_moves.md` — full specification
-- `moves/PLAN.md` — phased implementation plan
+- `moves/spec/money_moves.md` — design decisions (high-level)
 - `moves/spec/clawdbot.md` — OpenClaw setup guide
 
 ## Coding Standards
