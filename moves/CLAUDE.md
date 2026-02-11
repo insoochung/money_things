@@ -14,7 +14,7 @@ Autonomous execution engine with web dashboard. The "doing" half of the money sy
 money_thoughts ──► POST /api/fund/theses ──► Thesis Engine
                                                  │
                                            Signal Engine
-                                           (LLM + confidence scoring)
+                                           (gate checks + conviction)
                                                  │
                                            Telegram Bot
                                            (approve / reject / ignore)
@@ -59,7 +59,7 @@ Style: content-first, no chrome, warm, typography-driven
 
 ## Key Features
 
-- **Signal Engine** — LLM-scored confidence with thesis strength, principles, domain expertise, source accuracy
+- **Signal Engine** — Gate-based: thesis conviction = confidence, deterministic gates (conviction ≥70%, ≥2 /think sessions, 7d cooldown, earnings block, trading windows)
 - **Telegram Bot** — Approve/reject inline buttons, 24h ignore timeout
 - **What-If Tracking** — Rejected vs ignored distinction (engagement vs conviction)
 - **Funding Plan** — Buy signals include which lot to sell + tax impact

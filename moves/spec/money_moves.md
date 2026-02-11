@@ -271,33 +271,23 @@ LLM generates signal
        └── Kill switch / risk limit ──► [cancelled]
 ```
 
-### Confidence Scoring
+### Signal Generation (Gate-Based)
 
-LLM generates a raw confidence score. The engine adjusts it through multiple layers:
+Thesis conviction (set by LLM reasoning via `/think` sessions) IS the confidence
+score. No weighted factor scoring. Deterministic gates guard entry:
 
 ```python
-def score_confidence(signal, thesis, principles, profile):
-    # 1. Base: LLM raw confidence
-    score = signal.raw_confidence
+# BUY gates (all must pass — SELLs bypass):
+1. Conviction ≥ 70%
+2. ≥ 2 /think sessions (thesis_versions as proxy)
+3. Thesis age ≥ 7 days
+4. No imminent earnings (within 5 days)
+5. Not in trading window blackout
+6. Risk manager pre-trade check passes
 
-    # 2. Thesis strength modifier
-    score *= thesis_strength_multiplier(thesis.status)
-    # active=1.0, strengthening=1.1, confirmed=1.2, weakening=0.6, invalidated=0.0
-
-    # 3. Principles engine adjustment
-    for principle in principles.match(signal):
-        score += principle.weight  # +0.05 for validated principles, -0.05 for unvalidated
-
-    # 4. Domain expertise weighting (configurable profile)
-    if signal.domain in profile.expertise_domains:
-        score *= profile.domain_boost  # e.g., 1.15 for AI/SW/HW
-
-    # 5. Source historical accuracy
-    source_accuracy = signal_scores.get_accuracy(signal.source)
-    score *= source_accuracy_multiplier(source_accuracy)
-
-    # 6. Clamp to [0.0, 1.0]
-    return max(0.0, min(1.0, score))
+# Confidence = thesis.conviction (0.0–1.0)
+# Position size = base (2%) × confidence × 2, capped at max_position_pct
+# Signal dedup: one pending signal per ticker, updates existing on re-scan
 ```
 
 ### Domain Expertise Profile

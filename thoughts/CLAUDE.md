@@ -29,11 +29,11 @@ These are available when called from the money_moves Telegram bot:
 ## Thesis Lifecycle
 
 ```
-Conversation → /thesis → theses/active/
-  → /discover (find tickers) → /research (validate)
-  → /idea (trade rec) → /push (send to money_moves)
-  → money_moves executes → results port back
-  → /review → principles updated → next thesis informed
+/think <idea> → sub-agent research → parse output
+  → auto-save research artifacts → conviction change approval
+  → thesis updated in moves DB → signal generator checks gates
+  → signal to Telegram → approve/reject → trade execution
+  → outcome tracker scores thesis → /brief shows status
 ```
 
 ## Interface

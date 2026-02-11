@@ -27,7 +27,7 @@ money_thoughts ──── thesis + tickers ────► money_moves
 1. **Think** — User develops investment theses conversationally in money_thoughts
 2. **Discover** — money_thoughts finds tickers aligned with thesis, validates via research
 3. **Push** — Validated thesis + ticker universe pushed to money_moves
-4. **Execute** — money_moves generates LLM-scored signals, sends to Telegram for approval
+4. **Execute** — money_moves generates gate-checked signals (conviction ≥70%, ≥2 /think sessions, 7d cooldown), sends to Telegram for approval
 5. **Approve/Reject/Ignore** — User responds via Telegram (or 24h timeout = ignore)
 6. **Trade** — Approved signals execute via Schwab API
 7. **Learn** — Results + reasoning summaries port back to money_thoughts for review

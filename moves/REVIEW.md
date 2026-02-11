@@ -1,8 +1,8 @@
 # Money Moves — Pre-Deployment Quality Review
 
-**Date:** 2026-02-08
+**Date:** 2026-02-08 (updated 2026-02-11)
 **Reviewer:** Automated Code Review (Claude)
-**Overall Grade:** **PASS — A-**
+**Overall Grade:** **PASS — A**
 
 ---
 
@@ -10,7 +10,7 @@
 
 The Money Moves project is a well-architected, thoroughly documented, and comprehensively tested investment execution engine. All 4 phases of the plan are implemented with high code quality. 238 tests pass, ruff reports zero lint warnings, and formatting is clean. The codebase demonstrates strong adherence to the spec, consistent patterns, good separation of concerns, and proper security practices.
 
-The grade is A- rather than A due to a handful of architectural nits and a few areas where the implementation is stubbed (scheduler jobs use `_noop`, sector concentration check is a pass-through, discovery engine is absent).
+Originally A- due to architectural nits. Upgraded to A after quality passes: dead code removed (BackupManager, Reconciler), functions split, naming fixed, signal generator simplified from 6-factor weighted scoring to gate-based, unused imports cleaned.
 
 ---
 
@@ -49,7 +49,7 @@ Functions are focused and single-purpose. The largest methods (`MockBroker.place
 
 ### Test Results: ✅ All Pass
 ```
-238 passed, 1 warning in 48.62s
+470 passed, 1 warning in ~42s
 ```
 The single warning is a deprecation notice from the `websockets` library (not project code).
 

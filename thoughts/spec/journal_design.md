@@ -159,56 +159,29 @@ Honest assessment of what we've built vs what we need:
 | Congress politician scoring | 37 tests, full tier system | **Overengineered.** We have 2 positions (META, QCOM RSUs). Congress trades are a nice-to-have signal, not a driver. The whale/notable/average/noise tiers are cool but won't matter until we're actively trading 10+ symbols. Keep but deprioritize. |
 | Tax engine + routing comparison | 34 tests, 10-scenario comparison | **Right-sized for later, premature now.** You have 2 accounts, both taxable brokerage (no Roth yet). Tax lot tracking is useful for META/QCOM sells, but the routing engine has nothing to route TO. Wire it when Roth IRA is set up. |
 | Multi-user spec | Full spec written | **Correct decision to defer.** One user, build for one. |
-| Signal generator | Runs every 30min, thesis-only | **Under-engineered.** Missing watchlist triggers, news, earnings calendar, calibration. The most important component is the thinnest. |
-| Thoughts module (current) | Engine, bridge, commands — all stubs | **Right idea, wrong execution.** Commands don't actually spawn anything. Bridge reads/writes but nobody calls it. Needs complete rewiring. |
-| Dashboard | 15+ sections | **Over-scoped for read-only.** 15 sections but can't edit the 3 things that matter (theses, principles, watchlist). Add edit, cut sections nobody uses. |
-| Discovery engine | Finds tickers per thesis | **Good but disconnected.** Does discovery but doesn't create watchlist entries or feed signals. |
-| News scanner | Scores articles | **Good but disconnected.** Scores news but doesn't feed signal generator. |
+| Signal generator | Gate-based, thesis conviction = confidence | **Simplified.** Was 6-factor weighted scoring, now gate checks only. LLM reasoning sets conviction via /think. |
+| Thoughts module | Engine, bridge, commands, feedback, trigger monitor | **Fully wired.** /think spawns sub-agents, output parsed, approve/reject flow works. |
+| Dashboard | 15+ sections, inline editing | **Complete.** Thesis and principle editing, watchlist triggers, 2yr price history. |
+| Discovery engine | Finds tickers per thesis | Standalone, not wired to watchlist auto-creation. |
+| News scanner | Scores articles | Standalone, not wired to signal generator (by design — gates only). |
 
-### Weak Links (priority order)
+### Status (2026-02-11): All P0-P3 complete.
 
-1. **Thoughts → Moves connection is broken.** /think doesn't spawn anything. The entire thesis development loop is a stub.
-2. **Signal generator is too thin.** Only reads conviction. Doesn't check watchlist, news, earnings, calibration.
-3. **Dashboard can't edit.** You can see everything but change nothing.
-4. **No outcome feedback.** Trades happen but learnings never flow back.
-5. **Watchlist doesn't exist as a DB table.** The original journal had it, we don't.
+All weak links resolved:
+- ✅ /think spawns sub-agents, parses output, applies changes with approve/reject buttons
+- ✅ Signal generator: gate-based (conviction ≥70%, ≥2 sessions, 7d cooldown, earnings, windows)
+- ✅ Dashboard: inline editing for theses and principles, watchlist trigger management
+- ✅ Outcome tracker: `engine/outcome_tracker.py` scores theses vs actual returns
+- ✅ Watchlist triggers: full CRUD API + dashboard section
 
 ---
 
-## 8. TODO (Priority Order)
+## 8. Remaining TODO
 
-### P0: Make /think actually work
-- [ ] `context_builder.py` — build thesis-scoped context packets
-- [ ] `spawner.py` — wire to `sessions_spawn()`, define output format
-- [ ] Update `commands.py` — 3 commands only (/think, /note, /journal)
-- [ ] Update `AGENT_PROMPT.md` — researcher+analyst+critic in one session
-- [ ] Update Munny's AGENTS.md — announce parsing instructions
-- [ ] Slow-to-act gates (2 sessions, 1 week cooldown, conviction threshold)
-- [ ] Import principles + watchlist from original journal
-
-### P1: Enrich signal generator
-- [ ] `watchlist_triggers` table + migration
-- [ ] Wire news_scanner into signal confidence
-- [ ] Earnings calendar (free API or scrape)
-- [ ] Wire trading windows check (table exists, not checked)
-- [ ] Calibration tracking (win rate per thesis)
-- [ ] Multi-factor confidence scoring
-
-### P2: Dashboard editing
-- [ ] Thesis inline edit (conviction slider, status dropdown, symbol tags)
-- [ ] Principles inline edit (text, weight slider, validated toggle)
-- [ ] Watchlist trigger management (add/edit/toggle)
-- [ ] Add /note equivalent (quick thought capture from dashboard)
-
-### P3: Outcome feedback loop
-- [ ] `feedback.py` — daily job reads closed trades, writes review journals
-- [ ] Pattern detection (thesis consistently right/wrong)
-- [ ] Calibration data updates
-
-### P4: Cleanup
-- [ ] Remove unused Telegram commands (/research, /review, /synthesize, /onboard, /outcomes)
-- [ ] Prune dashboard sections nobody uses
-- [ ] Import research files from original journal (META.md, QCOM.md, etc.)
+- [ ] First real `/think` e2e test with live sub-agent
+- [ ] LLM reasoning for signal recommendations (gates done, reasoning not built)
+- [ ] Import research files from original journal (META.md, QCOM.md, etc.) — deferred
+- [ ] Schwab API activation — waiting on Schwab
 
 ---
 
@@ -216,4 +189,4 @@ Honest assessment of what we've built vs what we need:
 - moves module core code (engine, signals, trades)
 - thoughts DB schema (existing tables are fine)
 - Tax engine (keep, wire when Roth exists)
-- Congress scoring (keep, deprioritize)
+- Congress scoring (keep, runs independently from signals)
