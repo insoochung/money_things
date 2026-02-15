@@ -61,7 +61,7 @@ See `moves/spec/clawdbot.md` for full setup guide.
 
 ## Coding Standards
 
-This is an **AI-maintained codebase**. All agents working on this repo must follow these rules.
+This is an **AI-maintained codebase**. All agents working on this repo must follow these rules. When multiple agents work in parallel, each must use its own git worktree — team lead creates worktrees before spawning, merges after completion. Always include a dedicated reviewer agent that interactively reviews code as dev agents produce it.
 
 ### Code Style
 - **Small, single-purpose functions** — Each function does one thing. Minimize parameters. Refactor instead of adding arguments.
@@ -72,14 +72,17 @@ This is an **AI-maintained codebase**. All agents working on this repo must foll
 ### Testing
 - **TDD** — Write tests before or alongside implementation. Every module gets a test file.
 - **No trivial tests** — Don't test Python itself. No testing that constructors set fields or that 1+1=2. Test real behavior, edge cases, and integration points that could actually break.
-- **Tests must pass** before moving on to the next task.
+- **Descriptive test names** — Encode what's tested: `test_cooldown_blocks_duplicate_signal`, not `test_cooldown`.
+- **Tests must pass** — Re-read code, run tests and linting, fix issues before moving on.
 
 ### Linting
 - **ruff** — Shared config at repo root `pyproject.toml`. Run `ruff check` and `ruff format` before any task is considered done. Zero warnings policy.
 
 ### Process
 - **Phase reviews** — Each implementation phase gets a review stage before the next phase begins.
+- **Self-contained commits** — Each commit is a reviewable unit. Don't bundle unrelated changes.
 - **Leave trails** — Docstrings, commit messages, and code structure should make the "why" obvious to the next agent.
+- **Check sources** — Read actual code/docs before making architectural claims. If unsure, say so.
 
 ## Source Repo
 
